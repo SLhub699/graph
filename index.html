@@ -191,7 +191,7 @@ function chart(data, which, smooth, hidden){
     } else {
       g += `<path d="${path(pts)}" fill="none" stroke="${c}" stroke-width="2"
              stroke-linejoin="round" stroke-linecap="round"/>`;
-      if (which === "val")
+      if (which === "val" || which === "score")
         g += pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="2.4" fill="${c}"/>`).join("");
     }
   }
@@ -216,18 +216,24 @@ function legend(data){
     const arm = data.arms[a] || {};
     const tr = arm.train || {s:[],v:[]};
     const va = arm.val   || {s:[],v:[]};
+    const sc = arm.score || {s:[],v:[]};
     const last = tr.v.length ? ema(tr.v, smooth).slice(-1)[0] : null;
     const vlast = va.v.length ? va.v[va.v.length-1] : null;
+    const slast = sc.v.length ? sc.v[sc.v.length-1] : null;
     const step = tr.s.length ? tr.s[tr.s.length-1] : 0;
-    // 30 分钟没写事件文件 ⟹ 这条臂多半已经停了(跑起来时约 1 分钟一步)
+    // 阈值 90 分钟,不是凭感觉:val 评测**期间完全不写标量**,而实测评测耗时
+    // 中位 37 分、最长 46 分(2026-08-18 量的四条 run 的 timing_s/testing)。
+    // 定 30 分钟的话,每 10 步做一次 val 就误报一次"臂停了" —— 狼来了的告警
+    // 比没有告警更糟。90 分钟 ≈ 2× 实测最长评测,既躲开评测窗口又不会拖太久。
     const idle = arm.mtime ? now - arm.mtime : null;
-    const stale = idle !== null && idle > 1800;
+    const stale = idle !== null && idle > 5400;
     return `<div class="lg ${hidden.has(a)?"off":""}" data-arm="${a}">
       <span class="sw" style="background:var(${COLOR[a]})"></span>
       <span class="nm">${a}</span>
       <span class="vl">step ${step} · train ${last===null?"—":(last*100).toFixed(1)+"%"}
-        · val ${vlast===null?"—":(vlast*100).toFixed(1)+"%"}</span>
-      ${stale?`<span class="stale">静默 ${dur(idle)}</span>`:""}
+        · val ${vlast===null?"—":(vlast*100).toFixed(1)+"%"}
+        · score ${slast===null?"—":(slast*100).toFixed(1)+"%"}</span>
+      ${stale?`<span class="stale">${dur(idle)} 无写入</span>`:""}
     </div>`;
   }).join("") + `</div>`;
 }
@@ -241,6 +247,12 @@ function render(data){
       <p class="sub">val/success_rate · 每 10 步一次 · 这条才是可写进论文的口径</p>
       ${chart(data, "val", 0, hidden)}
       ${legend(data)}
+    </div>
+    <div class="panel">
+      <h2>验证 Score</h2>
+      <p class="sub">val/score · 同一批评测的 partial-credit 分数 ·
+        SR 还卡在 0 的时候它已经能分出高下</p>
+      ${chart(data, "score", 0, hidden)}
     </div>
     <div class="panel">
       <h2>训练 SR</h2>
