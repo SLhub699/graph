@@ -6,53 +6,76 @@
 <meta name="robots" content="noindex,nofollow">
 <title>SW SR</title>
 <style>
+/* 亮色是基色;暗色只在 prefers-color-scheme 里覆盖同一批 token,数值
+ * 全部来自 dataviz 技能的已校验默认色板(四类别色取 slot 1-4:蓝/橙/青/黄,
+ * 相邻 CVD ΔE ≥ 8、常人 ΔE ≥ 15 都过线 —— 旧的手选配色在暗色下
+ * gigpo/hgpo 两色 ΔE 只有 0.85,色弱基本分不出来)。 */
 :root{
-  --bg:#0e1116; --panel:#161b22; --line:#262c36; --fg:#e6edf3; --dim:#8b949e;
-  --grpo:#7aa2f7; --gigpo:#e0af68; --hgpo:#9ece6a; --spectral:#f7768e;
+  --bg:#f9f9f7; --panel:#fcfcfb; --line:#e1e0d9; --axis:#c3c2b7;
+  --fg:#0b0b0b; --fg2:#52514e; --dim:#898781;
+  --grpo:#2a78d6; --gigpo:#eb6834; --hgpo:#1baf7a; --spectral:#eda100;
+  --crit:#d03b3b;                 /* 状态色,固定,不跟着类别色板走 */
 }
-@media (prefers-color-scheme: light){
-  :root{ --bg:#ffffff; --panel:#f6f8fa; --line:#d8dee4; --fg:#1f2328; --dim:#656d76;
-         --grpo:#2f6feb; --gigpo:#9a6700; --hgpo:#1a7f37; --spectral:#cf222e; }
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0d0d0d; --panel:#1a1a19; --line:#2c2c2a; --axis:#383835;
+    --fg:#ffffff; --fg2:#c3c2b7; --dim:#898781;
+    --grpo:#3987e5; --gigpo:#d95926; --hgpo:#199e70; --spectral:#c98500;
+    --crit:#d03b3b;
+  }
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
   font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
 .wrap{max-width:1100px;margin:0 auto;padding:16px}
-header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.02em}
-.meta{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+.meta{color:var(--fg2);font-size:12px;font-variant-numeric:tabular-nums}
 .spacer{flex:1}
 button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
   border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:inherit}
-button:hover{border-color:var(--dim)}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-  padding:14px 14px 8px;margin-bottom:14px}
+button:hover{border-color:var(--axis)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px 16px 10px;margin-bottom:16px;
+  box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .panel h2{font-size:13px;margin:0 0 2px;font-weight:600}
-.panel .sub{font-size:11px;color:var(--dim);margin:0 0 10px;
+.panel .sub{font-size:11px;color:var(--fg2);margin:0 0 12px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-svg{display:block;width:100%;height:auto;touch-action:pan-y}
-.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;font-size:12px}
+.chartbox{position:relative}
+svg{display:block;width:100%;height:auto;touch-action:pan-y;cursor:crosshair}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:10px;font-size:12px}
 .lg{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
-  padding:2px 0;font-variant-numeric:tabular-nums}
+  padding:3px 0;font-variant-numeric:tabular-nums;transition:opacity .15s}
 .lg.off{opacity:.32}
-.sw{width:20px;height:3px;border-radius:2px;flex:none}
+.sw{width:18px;height:3px;border-radius:2px;flex:none}
 .lg .nm{font-weight:600;min-width:62px}
-.lg .vl{color:var(--dim)}
-.lg .stale{color:var(--spectral);font-size:11px;white-space:nowrap}
+.lg .vl{color:var(--fg2)}
+.lg .stale{color:var(--crit);font-size:11px;white-space:nowrap;font-weight:600}
 @media (max-width:640px){
   .legend{gap:2px 0}
   .lg{width:100%}                       /* 一臂一行,拇指也点得中 */
   .lg .vl{font-size:11px}
   .wrap{padding:12px 10px}
 }
-.ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin-top:4px}
+.ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg2);margin-top:6px}
 input[type=range]{width:130px;accent-color:var(--grpo)}
-.msg{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;
+.msg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;
   line-height:1.75}
 .msg code{background:var(--bg);border:1px solid var(--line);border-radius:4px;
   padding:1px 5px;font-size:12px;word-break:break-all}
-.err{color:var(--spectral)}
-.tip{fill:var(--fg);font-size:11px;font-variant-numeric:tabular-nums}
+.err{color:var(--crit)}
+/* 悬浮读数:crosshair 在 svg 里画,数值面板用一个绝对定位的 HTML div ——
+ * 文字排版比 SVG foreignObject 简单太多,且不会被 viewBox 缩放影响字号。 */
+.tt{position:absolute;top:0;left:0;pointer-events:none;z-index:2;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:7px 10px;font-size:11px;line-height:1.6;box-shadow:0 4px 14px rgba(0,0,0,.12);
+  white-space:nowrap;opacity:0;transition:opacity .1s}
+.tt.show{opacity:1}
+.tt .hd{color:var(--fg2);font-variant-numeric:tabular-nums;margin-bottom:2px}
+.tt .row{display:flex;align-items:center;gap:6px}
+.tt .key{width:10px;height:2px;border-radius:1px;flex:none}
+.tt .nm{color:var(--fg2);min-width:56px}
+.tt .val{font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;padding-left:10px}
 </style>
 </head>
 <body>
@@ -144,15 +167,21 @@ function path(pts){
   return pts.length ? "M" + pts.map(p=>`${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join("L") : "";
 }
 
+// chart() 顺手把画图用的 px/py/xMax 等标度存进 chartMetas(跟 render() 里
+// 面板出现的顺序一一对应),wireHover() 靠它把悬浮 crosshair 接到对的图上。
+let chartMetas = [];
+
 function chart(data, which, smooth, hidden){
   const {W, H, PAD} = dims();
   const series = ARMS
     .map(a => ({a, d: (data.arms[a]||{})[which] || {s:[],v:[]}}))
     .filter(o => o.d.s.length && !hidden.has(o.a));
 
-  if (!series.length)
-    return `<svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}"
-      text-anchor="middle" fill="var(--dim)" font-size="13">暂无数据</text></svg>`;
+  if (!series.length){
+    chartMetas.push(null);
+    return `<div class="chartbox"><svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}"
+      text-anchor="middle" fill="var(--dim)" font-size="13">暂无数据</text></svg></div>`;
+  }
 
   const xMax = Math.max(...series.map(o => o.d.s[o.d.s.length-1]), 1);
   const yRaw = Math.max(...series.map(o => Math.max(...o.d.v)), 0.05);
@@ -175,12 +204,16 @@ function chart(data, which, smooth, hidden){
     g += `<text x="${x}" y="${H-PAD.b+16}" text-anchor="middle" fill="var(--dim)"
            font-size="10">${t}</text>`;
   }
-  g += `<line x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}"
-         stroke="var(--line)" stroke-width="1"/>`;
+  g += `<line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${H-PAD.b}"
+         stroke="var(--axis)" stroke-width="1"/>
+        <line x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}"
+         stroke="var(--axis)" stroke-width="1"/>`;
 
+  const plotted = [];
   for (const {a, d} of series){
     const c = `var(${COLOR[a]})`;
     const pts = d.s.map((s,i)=>[px(s), py(d.v[i])]);
+    let lastPt = pts[pts.length-1];
     // 训练曲线一步一个点、抖动很大 ⟹ 原始线压到 18% 当背景,EMA 线才是主角。
     // 验证曲线 10 步一个点、本来就平,不需要这套。
     if (which === "train" && smooth > 0){
@@ -188,14 +221,79 @@ function chart(data, which, smooth, hidden){
       g += `<path d="${path(pts)}" fill="none" stroke="${c}" stroke-width="1" opacity=".18"/>`;
       g += `<path d="${path(sm)}" fill="none" stroke="${c}" stroke-width="2"
              stroke-linejoin="round" stroke-linecap="round"/>`;
+      lastPt = sm[sm.length-1];
     } else {
       g += `<path d="${path(pts)}" fill="none" stroke="${c}" stroke-width="2"
              stroke-linejoin="round" stroke-linecap="round"/>`;
-      if (which === "val" || which === "score")
-        g += pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="2.4" fill="${c}"/>`).join("");
     }
+    // 端点标记:当前值的锚,2px 底色描边把它从线上"摘"出来,不用给每个点都画点。
+    g += `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="4" fill="${c}"
+           stroke="var(--panel)" stroke-width="2"/>`;
+    plotted.push({a, c, s: d.s, v: d.v});
   }
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>`;
+  g += `<g class="hover-g"></g>`;
+  chartMetas.push({W, H, PAD, xMax, px, py, series: plotted});
+  return `<div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
+    <div class="tt"></div></div>`;
+}
+
+function nearestIdx(arr, x){
+  if (!arr.length) return -1;
+  let lo = 0, hi = arr.length - 1;
+  if (x <= arr[0]) return 0;
+  if (x >= arr[hi]) return hi;
+  while (hi - lo > 1){ const mid = (lo+hi) >> 1; arr[mid] < x ? lo = mid : hi = mid; }
+  return (x - arr[lo] <= arr[hi] - x) ? lo : hi;
+}
+
+// crosshair + 每系列读数,鼠标/触摸都走这条路径。悬浮态只画在 hover-g 里,
+// 不改静态渲染,所以跟 legend 的显隐切换互不干扰。
+function wireHover(box, meta){
+  if (!box || !meta) return;
+  const svg = box.querySelector("svg"), tt = box.querySelector(".tt");
+  const hoverG = svg.querySelector(".hover-g");
+  const {W, H, PAD, xMax, px, py, series} = meta;
+
+  function move(ev){
+    const t = ev.touches ? ev.touches[0] : ev;
+    const r = svg.getBoundingClientRect();
+    const ux = (t.clientX - r.left) / r.width * W;
+    if (ux < PAD.l || ux > W - PAD.r){ leave(); return; }
+    const sHover = (ux - PAD.l) / (W - PAD.l - PAD.r) * xMax;
+
+    let dots = `<line x1="${ux.toFixed(1)}" y1="${PAD.t}" x2="${ux.toFixed(1)}" y2="${H-PAD.b}"
+      stroke="var(--axis)" stroke-width="1" stroke-dasharray="3,3"/>`;
+    let rows = "", step0 = null;
+    for (const {a, c, s, v} of series){
+      const idx = nearestIdx(s, sHover);
+      if (idx < 0) continue;
+      const step = s[idx], val = v[idx];
+      if (step0 === null) step0 = step;
+      dots += `<circle cx="${px(step).toFixed(1)}" cy="${py(val).toFixed(1)}" r="3.5"
+        fill="${c}" stroke="var(--panel)" stroke-width="1.5"/>`;
+      rows += `<div class="row"><span class="key" style="background:${c}"></span>
+        <span class="nm">${a}</span><span class="val">${(val*100).toFixed(1)}%</span></div>`;
+    }
+    hoverG.innerHTML = dots;
+    tt.innerHTML = `<div class="hd">step ${step0}</div>${rows}`;
+    tt.classList.add("show");
+
+    const boxR = box.getBoundingClientRect();
+    const ttW = tt.offsetWidth, ttH = tt.offsetHeight;
+    let left = t.clientX - boxR.left + 14, top = t.clientY - boxR.top - ttH - 10;
+    if (left + ttW > boxR.width) left = t.clientX - boxR.left - ttW - 14;
+    if (top < 0) top = t.clientY - boxR.top + 14;
+    tt.style.left = `${Math.max(0,left)}px`;
+    tt.style.top = `${Math.max(0,top)}px`;
+  }
+  function leave(){
+    tt.classList.remove("show");
+    hoverG.innerHTML = "";
+  }
+  svg.addEventListener("pointermove", move);
+  svg.addEventListener("pointerleave", leave);
+  svg.addEventListener("touchmove", ev => { move(ev); ev.preventDefault(); }, {passive:false});
+  svg.addEventListener("touchend", leave);
 }
 
 /* ------------------------------------------------------------------ 渲染 */
@@ -257,6 +355,7 @@ function legend(data){
 function render(data){
   latest = data;
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
+  chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
   root.innerHTML = `
     <div class="panel">
       <h2>验证 SR</h2>
@@ -278,6 +377,8 @@ function render(data){
         <input type="range" id="sm" min="0" max="0.98" step="0.02" value="${smooth}">
         <span id="smv">${smooth.toFixed(2)}</span></div>
     </div>`;
+
+  root.querySelectorAll(".chartbox").forEach((box, i) => wireHover(box, chartMetas[i]));
 
   root.querySelectorAll(".lg").forEach(el=>{
     el.onclick = () => {
