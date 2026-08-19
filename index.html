@@ -70,8 +70,16 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
 .tasks .tx{color:var(--fg2);line-height:1.7}
 .tasks .tx b{color:var(--fg);font-weight:600}
 .soft{opacity:.62}
-.warn{display:inline-block;width:13px;height:13px;line-height:13px;text-align:center;
-      border-radius:99px;background:var(--wait);color:#fff;font-size:9px;cursor:help}
+/* 预计完成:底纹深浅 = 推算可靠性。best 最实,weak 虚线表示"别当真" */
+.fin{display:inline-block;padding:1px 7px;border-radius:6px;cursor:help;
+     border:1px solid transparent}
+.fin b{font-weight:600}
+.fin.best{background:color-mix(in srgb, var(--run) 16%, transparent);
+          border-color:color-mix(in srgb, var(--run) 40%, transparent)}
+.fin.ok  {background:color-mix(in srgb, var(--grpo) 13%, transparent);
+          border-color:color-mix(in srgb, var(--grpo) 32%, transparent)}
+.fin.weak{border-style:dashed;
+          border-color:color-mix(in srgb, var(--wait) 55%, transparent);opacity:.8}
 .st{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;
     color:#fff;white-space:nowrap}
 .st.run{background:var(--run)} .st.wait{background:var(--wait)}
@@ -403,28 +411,36 @@ function tasksPanel(data){
     // 三类"预计"可靠性差一个数量级,分开渲染 —— 不能让预估冒充事实:
     //   进度ETA(按实测步进节奏算)  > 墙钟到期(硬事实,但答的是"何时被砍")
     //   > SLURM 起跑预估(实测漂过四次,标灰并注明)
+    // 主角是「预计完成」。推算方式的可靠性递减,用不同底纹标出来,
+    // 让人一眼看出哪个数能当真 —— 而不是把四种来源混成一个看似确定的时刻。
+    const SRC = {
+      step:  ["按实测步进节奏",   "best"],
+      hist:  ["按同类作业实测时长", "ok"],
+      chain: ["前序完成 + 本任务时长", "ok"],
+      queue: ["SLURM 起跑预估 + 时长(预估会大幅漂移)", "weak"],
+    };
     const bits = [];
-    if (s === "PENDING"){
-      if (j.after) bits.push(`排在「${j.after}」之后`);
-      else {
-        if (j.reason && j.reason !== "None") bits.push(j.reason);
-        if (j.sched_start && j.sched_start !== "N/A")
-          bits.push(`<span class="soft">SLURM 预估 ${fmtStamp(j.sched_start)}
-            <span class="warn" title="backfill 预估会随集群负载大幅漂移,只作参考">?</span></span>`);
-      }
-    } else if (s === "RUNNING"){
+    if (j.kind === "service"){
+      bits.push(`<span class="soft">常驻服务 · 跑到活干完为止</span>`);
       if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
-      const pr = j.progress;
-      if (pr && pr.step != null){
-        bits.push(`<b>${pr.step}/${pr.total} 步</b>`);
-        if (pr.eta) bits.push(`<b>预计完成 ${dur(pr.eta - Date.now()/1000)}后 ·
-          ${fmtStamp2(pr.eta)}</b>`);
+    } else {
+      if (j.finish){
+        const [why, lvl] = SRC[j.finish_src] || ["", "ok"];
+        const left = j.finish - Date.now()/1000;
+        bits.push(`<span class="fin ${lvl}" title="${why}">预计完成 `
+          + `<b>${fmtStamp2(j.finish)}</b>`
+          + (left > 0 ? ` · ${dur(left)}后` : "") + `</span>`);
       }
-      // 墙钟到期:训练任务常常先撞它再被看门狗续跑,所以要和 ETA 并排看
-      if (j.deadline && j.deadline !== "N/A")
-        bits.push(`<span class="soft">墙钟到期 ${fmtStamp(j.deadline)}</span>`);
+      if (s === "RUNNING"){
+        const pr = j.progress;
+        if (pr && pr.step != null) bits.push(`${pr.step}/${pr.total} 步`);
+        if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
+      } else if (s === "PENDING"){
+        if (j.after) bits.push(`<span class="soft">排在「${j.after}」之后</span>`);
+        else if (j.reason && j.reason !== "None") bits.push(`<span class="soft">${j.reason}</span>`);
+      }
     }
-    if (j.note) bits.push(j.note);
+    if (j.note) bits.push(`<span class="soft">${j.note}</span>`);
     return `<tr><td class="tl">${j.label || j.id}</td>
       <td><span class="st ${cls}">${STATE_ZH[s] || s}</span></td>
       <td class="tx">${bits.join(" · ")}</td></tr>`;
