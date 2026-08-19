@@ -70,6 +70,11 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
 .tasks .tx{color:var(--fg2);line-height:1.7}
 .tasks .tx b{color:var(--fg);font-weight:600}
 .soft{opacity:.62}
+.qcell{white-space:nowrap;font-size:12px}
+.qnum{font-variant-numeric:tabular-nums}
+.qbar{display:inline-block;width:78px;height:7px;border-radius:99px;
+      background:var(--line);overflow:hidden;vertical-align:middle;margin:0 6px}
+.qbar i{display:block;height:100%;border-radius:99px}
 /* 预计完成:底纹深浅 = 推算可靠性。best 最实,weak 虚线表示"别当真" */
 .fin{display:inline-block;padding:1px 7px;border-radius:6px;cursor:help;
      border:1px solid transparent}
@@ -450,12 +455,44 @@ function tasksPanel(data){
     <table class="tasks"><tbody>${rows}</tbody></table></div>`;
 }
 
+/* ------------------------------------------------------------- 资源占用 */
+// 只统计本人的占用。配额是**组共享**的,所以"我的/上限"说明的是
+// "我吃掉了多少",不是"还剩多少可用" —— 剩余取决于组里其他人,
+// 这行字必须留着,否则看到 172/750 会误以为还有 578 能用。
+function bar(used, quota, unit){
+  if (!quota) return `<span class="soft">${used}${unit}(该 QOS 无此配额)</span>`;
+  const pct = Math.min(100, used / quota * 100);
+  const lvl = pct >= 85 ? "bad" : pct >= 60 ? "wait" : "run";
+  return `<span class="qnum">${used}${unit} <span class="soft">/ ${quota}${unit}</span></span>
+    <span class="qbar"><i style="width:${pct.toFixed(1)}%;background:var(--${lvl})"></i></span>
+    <span class="soft">${pct.toFixed(0)}%</span>`;
+}
+function usagePanel(data){
+  const u = data.usage;
+  if (!u || !u.by_qos) return "";
+  // ⚠️ QOS 名是组账户名(PI 姓名),**不能**硬编进这个公开仓库。
+  // 显示用的标签由加密 payload 里的 v.label 下发;缺了就退回中性文案,
+  // 绝不回落成 q 本身 —— 那正是要藏的东西。
+  const rows = Object.entries(u.by_qos).map(([q, v], i) => `<tr>
+      <td class="tl">${v.label || ("配额 " + (i+1))}<br><span class="soft">${v.n} 个作业在跑</span></td>
+      <td class="qcell">内存 ${bar(v.mem_g, v.quota_mem_g, "G")}</td>
+      <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
+    </tr>`).join("");
+  return `<div class="panel"><h2>我的资源占用</h2>
+    <p class="sub">只统计本人的作业 · 采集于 ${ago(Date.now()/1000 - u.updated)} ·
+      口径是<b>申请值</b>(SLURM 按申请整块划走,实际用多少都一样占配额) ·
+      ⚠️ 配额是<b>全组共享</b>的,百分比是「我吃掉了多少」,
+      不是「还剩多少可用」—— 剩余取决于组里其他人</p>
+    <table class="tasks"><tbody>${rows}</tbody></table></div>`;
+}
+
 function render(data){
   latest = data;
   refreshArmList(data);
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
   chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
   root.innerHTML = `
+    ${usagePanel(data)}
     ${tasksPanel(data)}
     <div class="panel">
       <h2>验证 SR</h2>
