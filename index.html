@@ -14,6 +14,8 @@
   --bg:#f9f9f7; --panel:#fcfcfb; --line:#e1e0d9; --axis:#c3c2b7;
   --fg:#0b0b0b; --fg2:#52514e; --dim:#898781;
   --grpo:#2a78d6; --gigpo:#eb6834; --hgpo:#1baf7a; --spectral:#eda100;
+  --extra1:#8a5cd6; --extra2:#d6539a; --extra3:#2aa8c4;
+  --run:#1baf7a; --wait:#b9862c; --bad:#d1483e; --done:#8a8981;
   --crit:#d03b3b;                 /* 状态色,固定,不跟着类别色板走 */
 }
 @media (prefers-color-scheme: dark){
@@ -21,6 +23,8 @@
     --bg:#0d0d0d; --panel:#1a1a19; --line:#2c2c2a; --axis:#383835;
     --fg:#ffffff; --fg2:#c3c2b7; --dim:#898781;
     --grpo:#3987e5; --gigpo:#d95926; --hgpo:#199e70; --spectral:#c98500;
+  --extra1:#9a6ee0; --extra2:#e0679f; --extra3:#3fb3cc;
+  --run:#199e70; --wait:#c99a3f; --bad:#e0685e; --done:#77766e;
     --crit:#d03b3b;
   }
 }
@@ -59,6 +63,15 @@ svg{display:block;width:100%;height:auto;touch-action:pan-y;cursor:crosshair}
 }
 .ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg2);margin-top:6px}
 input[type=range]{width:130px;accent-color:var(--grpo)}
+.tasks{width:100%;border-collapse:collapse;font-size:12px}
+.tasks td{padding:5px 8px;border-top:1px solid var(--line);vertical-align:top}
+.tasks tr:first-child td{border-top:0}
+.tasks .tl{white-space:normal;min-width:180px}
+.tasks .tx{color:var(--fg2)}
+.st{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;
+    color:#fff;white-space:nowrap}
+.st.run{background:var(--run)} .st.wait{background:var(--wait)}
+.st.bad{background:var(--bad)} .st.done{background:var(--done)}
 .msg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;
   line-height:1.75}
 .msg code{background:var(--bg);border:1px solid var(--line);border-radius:4px;
@@ -102,6 +115,16 @@ const FILE = "sw_sr.json";
 const POLL_MS = 60000;
 const ARMS = ["grpo", "gigpo", "hgpo", "spectral"];
 const COLOR = {grpo:"--grpo", gigpo:"--gigpo", hgpo:"--hgpo", spectral:"--spectral"};
+// payload 里 ARMS 之外的臂(变体实验)动态取色:名字只存在于密文里,
+// 本文件(公开仓库)不硬编码任何新臂名。
+const EXTRA_VARS = ["--extra1", "--extra2", "--extra3"];
+let ARM_LIST = ARMS.slice();
+function refreshArmList(data){
+  const extras = Object.keys(data.arms || {})
+    .filter(a => !ARMS.includes(a)).sort();
+  ARM_LIST = [...ARMS, ...extras];
+  extras.forEach((a, i) => { COLOR[a] = EXTRA_VARS[i % EXTRA_VARS.length]; });
+}
 
 const $ = s => document.querySelector(s);
 const root = $("#root");
@@ -173,7 +196,7 @@ let chartMetas = [];
 
 function chart(data, which, smooth, hidden){
   const {W, H, PAD} = dims();
-  const series = ARMS
+  const series = ARM_LIST
     .map(a => ({a, d: (data.arms[a]||{})[which] || {s:[],v:[]}}))
     .filter(o => o.d.s.length && !hidden.has(o.a));
 
@@ -323,7 +346,7 @@ function paceEta(arm, curStep){
 
 function legend(data){
   const now = Date.now()/1000;
-  return `<div class="legend">` + ARMS.map(a=>{
+  return `<div class="legend">` + ARM_LIST.map(a=>{
     const arm = data.arms[a] || {};
     const tr = arm.train || {s:[],v:[]};
     const va = arm.val   || {s:[],v:[]};
@@ -352,11 +375,43 @@ function legend(data){
   }).join("") + `</div>`;
 }
 
+/* ------------------------------------------------------------- 任务进度 */
+// 纯数据驱动:标签/状态全部来自解密后的 payload,本文件不含任何任务内容。
+const STATE_ZH = {RUNNING:"运行中", PENDING:"排队", COMPLETED:"已完成",
+                  FAILED:"失败", CANCELLED:"已取消", TIMEOUT:"超时",
+                  UNKNOWN:"未知"};
+function tasksPanel(data){
+  const t = data.tasks;
+  if (!t || !t.jobs || !t.jobs.length) return "";
+  const rows = t.jobs.map(j=>{
+    const s = (j.state || "UNKNOWN").split(" ")[0];
+    const cls = s === "RUNNING" ? "run" : s === "PENDING" ? "wait"
+              : s === "COMPLETED" ? "done" : "bad";
+    let extra = "";
+    if (s === "PENDING"){
+      extra = j.reason && j.reason !== "None" ? `${j.reason}` : "";
+      if (j.sched_start && j.sched_start !== "N/A")
+        extra += ` · 预计 ${j.sched_start.slice(5, 16).replace("T", " ")}`;
+    } else if (j.elapsed && j.elapsed !== "00:00:00"){
+      extra = `已跑 ${j.elapsed}`;
+    }
+    if (j.note) extra += (extra ? " · " : "") + j.note;
+    return `<tr><td class="tl">${j.label || j.id}</td>
+      <td><span class="st ${cls}">${STATE_ZH[s] || s}</span></td>
+      <td class="tx">${extra}</td></tr>`;
+  }).join("");
+  return `<div class="panel"><h2>任务进度</h2>
+    <p class="sub">SLURM 实时状态 · 采集于 ${ago(Date.now()/1000 - t.updated)}</p>
+    <table class="tasks"><tbody>${rows}</tbody></table></div>`;
+}
+
 function render(data){
   latest = data;
+  refreshArmList(data);
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
   chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
   root.innerHTML = `
+    ${tasksPanel(data)}
     <div class="panel">
       <h2>验证 SR</h2>
       <p class="sub">val/success_rate · 每 10 步一次 · 这条才是可写进论文的口径</p>
