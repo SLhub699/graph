@@ -75,6 +75,21 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
 .qbar{display:inline-block;width:78px;height:7px;border-radius:99px;
       background:var(--line);overflow:hidden;vertical-align:middle;margin:0 6px}
 .qbar i{display:block;height:100%;border-radius:99px}
+/* ⚠️ 这个媒体查询必须放在 .qcell/.qbar 的基础规则**之后**。
+ * 同特异度下 CSS 按源码顺序取胜 —— 放在前面的话 width:78px 会把
+ * width:auto 覆盖掉,窄屏上进度条照样顶出边框(改第一版就踩了这个)。 */
+@media (max-width:640px){
+  /* 三列各自 nowrap 时,「数值 + 进度条 + 百分比」在 390px 宽屏上塞不下,
+   * 进度条会溢出面板。窄屏改成表格拆块:一行一格,条子自适应剩余宽度。 */
+  .tasks, .tasks tbody, .tasks tr, .tasks td{display:block;width:auto}
+  .tasks tr{border-top:1px solid var(--line);padding:7px 0}
+  .tasks tr:first-child{border-top:0}
+  .tasks td{border-top:0;padding:2px 0}
+  .tasks .tl{min-width:0}
+  .qcell{white-space:normal;display:flex;align-items:center;gap:6px}
+  .qnum{flex:0 0 auto}
+  .qbar{flex:1 1 auto;width:auto;min-width:40px;margin:0}
+}
 /* 预计完成:底纹深浅 = 推算可靠性。best 最实,weak 虚线表示"别当真" */
 .fin{display:inline-block;padding:1px 7px;border-radius:6px;cursor:help;
      border:1px solid transparent}
