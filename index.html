@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>SW SR</title>
+<title>训练看板</title>
 <style>
 /* 亮色是基色;暗色只在 prefers-color-scheme 里覆盖同一批 token,数值
  * 全部来自 dataviz 技能的已校验默认色板(四类别色取 slot 1-4:蓝/橙/青/黄,
@@ -62,6 +62,12 @@ svg{display:block;width:100%;height:auto;touch-action:pan-y;cursor:crosshair}
   .wrap{padding:12px 10px}
 }
 .ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg2);margin-top:6px}
+/* 任务组的分隔:两套实验的量级不可比,视觉上也必须一眼看出"这是另一摊" */
+.ghead{display:flex;align-items:baseline;gap:9px;margin:26px 2px 10px;
+  padding-left:9px;border-left:3px solid var(--axis)}
+.ghead:first-child{margin-top:4px}
+.ghead .gt{font-size:14px;margin:0;font-weight:600;letter-spacing:.02em}
+.ghead .gs{font-size:11px;color:var(--dim)}
 input[type=range]{width:130px;accent-color:var(--grpo)}
 .tasks{width:100%;border-collapse:collapse;font-size:12px}
 .tasks td{padding:5px 8px;border-top:1px solid var(--line);vertical-align:top}
@@ -126,7 +132,7 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
 <body>
 <div class="wrap">
   <header>
-    <h1>ScienceWorld · 四臂 SR</h1>
+    <h1>RL 训练看板</h1>
     <span class="meta" id="stamp"></span>
     <span class="spacer"></span>
     <button id="refresh">刷新</button>
@@ -145,17 +151,43 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
  */
 const FILE = "sw_sr.json";
 const POLL_MS = 60000;
-const ARMS = ["grpo", "gigpo", "hgpo", "spectral"];
-const COLOR = {grpo:"--grpo", gigpo:"--gigpo", hgpo:"--hgpo", spectral:"--spectral"};
-// payload 里 ARMS 之外的臂(变体实验)动态取色:名字只存在于密文里,
+const BASE = ["grpo", "gigpo", "hgpo", "spectral"];
+const BASE_VARS = {grpo:"--grpo", gigpo:"--gigpo", hgpo:"--hgpo", spectral:"--spectral"};
+// 基准四臂之外的臂(变体实验)动态取色:名字只存在于密文里,
 // 本文件(公开仓库)不硬编码任何新臂名。
 const EXTRA_VARS = ["--extra1", "--extra2", "--extra3"];
-let ARM_LIST = ARMS.slice();
-function refreshArmList(data){
-  const extras = Object.keys(data.arms || {})
-    .filter(a => !ARMS.includes(a)).sort();
-  ARM_LIST = [...ARMS, ...extras];
-  extras.forEach((a, i) => { COLOR[a] = EXTRA_VARS[i % EXTRA_VARS.length]; });
+const COLOR = {};                     // payload 的臂 key -> CSS 变量
+
+/* payload 按任务分组(data.groups + 每臂的 group/disp)。2026-08-22 加,
+ * 起因是 ALFWorld 8B 的 SR 到了 0.97,和 ScienceWorld 3B 的 0.12~0.58
+ * 画在同一张图里:y 轴被顶到 100%,SW 五条全挤进下半区,图等于白画。
+ * ⟹ 一组一整套面板,x/y 标度、图例、取色池全部各自独立。
+ * 老 payload(没有 groups 字段)退回单组,渲染结果与改版前一致。 */
+let GROUPS = [];
+function refreshGroups(data){
+  const arms = data.arms || {};
+  const disp = a => (arms[a] || {}).disp || a;
+  const defs = (data.groups && data.groups.length) ? data.groups
+                                                   : [{key:"", label:""}];
+  const taken = new Set();
+  GROUPS = defs.map(g => {
+    const keys = Object.keys(arms).filter(a => (arms[a].group || "") === g.key);
+    keys.forEach(a => taken.add(a));
+    // 组内先基准四臂后变体。变体取色池**每组独立** —— 全局排号的话
+    // 组一多就会 i%3 撞色(两个任务各四臂时实测撞两对)。
+    const base = BASE.map(b => keys.find(a => disp(a) === b)).filter(Boolean);
+    const extra = keys.filter(a => !base.includes(a)).sort();
+    base.forEach(a => { COLOR[a] = BASE_VARS[disp(a)]; });
+    extra.forEach((a, i) => { COLOR[a] = EXTRA_VARS[i % EXTRA_VARS.length]; });
+    return {key:g.key, label:g.label, arms:[...base, ...extra]};
+  }).filter(g => g.arms.length);
+  // 兜底:payload 里出现了不属于任何已知组的臂(推送端加了组却没下发 label)
+  // 也要画出来 —— 静默丢一条曲线比多画一块面板糟得多。
+  const orphan = Object.keys(arms).filter(a => !taken.has(a)).sort();
+  if (orphan.length){
+    orphan.forEach((a, i) => { COLOR[a] = EXTRA_VARS[i % EXTRA_VARS.length]; });
+    GROUPS.push({key:"_", label:"未分组", arms:orphan});
+  }
 }
 
 const $ = s => document.querySelector(s);
@@ -226,9 +258,9 @@ function path(pts){
 // 面板出现的顺序一一对应),wireHover() 靠它把悬浮 crosshair 接到对的图上。
 let chartMetas = [];
 
-function chart(data, which, smooth, hidden){
+function chart(data, armKeys, which, smooth, hidden){
   const {W, H, PAD} = dims();
-  const series = ARM_LIST
+  const series = armKeys
     .map(a => ({a, d: (data.arms[a]||{})[which] || {s:[],v:[]}}))
     .filter(o => o.d.s.length && !hidden.has(o.a));
 
@@ -284,7 +316,7 @@ function chart(data, which, smooth, hidden){
     // 端点标记:当前值的锚,2px 底色描边把它从线上"摘"出来,不用给每个点都画点。
     g += `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="4" fill="${c}"
            stroke="var(--panel)" stroke-width="2"/>`;
-    plotted.push({a, c, s: d.s, v: d.v});
+    plotted.push({a: (data.arms[a]||{}).disp || a, c, s: d.s, v: d.v});
   }
   g += `<g class="hover-g"></g>`;
   chartMetas.push({W, H, PAD, xMax, px, py, series: plotted});
@@ -376,9 +408,9 @@ function paceEta(arm, curStep){
   return {pace, eta};
 }
 
-function legend(data){
+function legend(data, armKeys){
   const now = Date.now()/1000;
-  return `<div class="legend">` + ARM_LIST.map(a=>{
+  return `<div class="legend">` + armKeys.map(a=>{
     const arm = data.arms[a] || {};
     const tr = arm.train || {s:[],v:[]};
     const va = arm.val   || {s:[],v:[]};
@@ -396,7 +428,7 @@ function legend(data){
     const {pace, eta} = paceEta(arm, step);
     return `<div class="lg ${hidden.has(a)?"off":""}" data-arm="${a}">
       <span class="sw" style="background:var(${COLOR[a]})"></span>
-      <span class="nm">${a}</span>
+      <span class="nm">${arm.disp || a}</span>
       <span class="vl">step ${step}${arm.epochs_total?"/"+arm.epochs_total:""}
         · train ${last===null?"—":(last*100).toFixed(1)+"%"}
         · val ${vlast===null?"—":(vlast*100).toFixed(1)+"%"}
@@ -501,34 +533,43 @@ function usagePanel(data){
     <table class="tasks"><tbody>${rows}</tbody></table></div>`;
 }
 
-function render(data){
-  latest = data;
-  refreshArmList(data);
-  $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
-  chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
-  root.innerHTML = `
-    ${usagePanel(data)}
-    ${tasksPanel(data)}
+// 一个任务组的三块面板。val/score 是 ScienceWorld 的 partial-credit 口径,
+// ALFWorld 根本不写这个 tag ⟹ 整组都没有 score 数据时不摆这块面板,
+// 免得"暂无数据"被读成"这组还没评"。
+function groupPanels(data, g){
+  const hasScore = g.arms.some(a => ((((data.arms[a]||{}).score)||{}).s||[]).length);
+  return `
+    ${g.label ? `<div class="ghead"><h2 class="gt">${g.label}</h2>
+      <span class="gs">${g.arms.length} 臂</span></div>` : ""}
     <div class="panel">
       <h2>验证 SR</h2>
       <p class="sub">val/success_rate · 每 10 步一次 · 这条才是可写进论文的口径</p>
-      ${chart(data, "val", 0, hidden)}
-      ${legend(data)}
+      ${chart(data, g.arms, "val", 0, hidden)}
+      ${legend(data, g.arms)}
     </div>
-    <div class="panel">
+    ${hasScore ? `<div class="panel">
       <h2>验证 Score</h2>
       <p class="sub">val/score · 同一批评测的 partial-credit 分数 ·
         SR 还卡在 0 的时候它已经能分出高下</p>
-      ${chart(data, "score", 0, hidden)}
-    </div>
+      ${chart(data, g.arms, "score", 0, hidden)}
+    </div>` : ""}
     <div class="panel">
       <h2>训练 SR</h2>
       <p class="sub">episode/success_rate · 每步 · 细线原始,粗线 EMA</p>
-      ${chart(data, "train", smooth, hidden)}
+      ${chart(data, g.arms, "train", smooth, hidden)}
       <div class="ctl"><span>平滑</span>
-        <input type="range" id="sm" min="0" max="0.98" step="0.02" value="${smooth}">
-        <span id="smv">${smooth.toFixed(2)}</span></div>
+        <input type="range" class="smr" min="0" max="0.98" step="0.02" value="${smooth}">
+        <span class="smv">${smooth.toFixed(2)}</span></div>
     </div>`;
+}
+
+function render(data){
+  latest = data;
+  refreshGroups(data);
+  $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
+  chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
+  root.innerHTML = usagePanel(data) + tasksPanel(data)
+    + GROUPS.map(g => groupPanels(data, g)).join("");
 
   root.querySelectorAll(".chartbox").forEach((box, i) => wireHover(box, chartMetas[i]));
 
@@ -539,8 +580,11 @@ function render(data){
       render(latest);
     };
   });
-  const sm = $("#sm");
-  if (sm) sm.oninput = e => { smooth = +e.target.value; render(latest); };
+  // 每组一个平滑滑块(id 会重复,所以用 class);它们共用同一个全局
+  // smooth —— 拖任意一个,重渲染时其余的跟着回正。
+  root.querySelectorAll(".smr").forEach(el=>{
+    el.oninput = e => { smooth = +e.target.value; render(latest); };
+  });
 }
 
 function showError(e){
