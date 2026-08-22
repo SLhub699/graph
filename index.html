@@ -497,8 +497,11 @@ function tasksPanel(data){
       <td><span class="st ${cls}">${STATE_ZH[s] || s}</span></td>
       <td class="tx">${bits.join(" · ")}</td></tr>`;
   }).join("");
+  // 已完成/已取消的行由推送端过滤掉(面板只回答"还有什么在跑、什么时候完")。
+  // 但要留一句计数 —— 否则找不到某个任务时,分不清是"办完了"还是"没提交上"。
+  const gone = t.hidden ? ` · 另有 ${t.hidden} 项已完成/已取消未列出` : "";
   return `<div class="panel"><h2>任务进度</h2>
-    <p class="sub">SLURM 实时状态 · 采集于 ${ago(Date.now()/1000 - t.updated)}</p>
+    <p class="sub">SLURM 实时状态 · 采集于 ${ago(Date.now()/1000 - t.updated)}${gone}</p>
     <table class="tasks"><tbody>${rows}</tbody></table></div>`;
 }
 
