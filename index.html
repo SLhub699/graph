@@ -17,6 +17,10 @@
   --extra1:#8a5cd6; --extra2:#d6539a; --extra3:#2aa8c4;
   --run:#1baf7a; --wait:#b9862c; --bad:#d1483e; --done:#8a8981;
   --crit:#d03b3b;                 /* 状态色,固定,不跟着类别色板走 */
+  /* 对垒面板的配色家族(蓝/橙/青/灰)。灰是刻意的第 4 家族:紫在 protan
+   * 模拟下与蓝不可分(实测 ΔE 1-3),灰靠零彩度与谁都拉得开。
+   * 深色下青/灰对的 CVD ΔE 落在 6-8 警戒带 ⟹ 同家族一律再叠线型区分。 */
+  --pf0:#2a78d6; --pf1:#eb6834; --pf2:#1baf7a; --pf3:#5f5e59;
 }
 @media (prefers-color-scheme: dark){
   :root{
@@ -26,6 +30,7 @@
   --extra1:#9a6ee0; --extra2:#e0679f; --extra3:#3fb3cc;
   --run:#199e70; --wait:#c99a3f; --bad:#e0685e; --done:#77766e;
     --crit:#d03b3b;
+    --pf0:#3987e5; --pf1:#d95926; --pf2:#199e70; --pf3:#a3a29b;
   }
 }
 *{box-sizing:border-box}
@@ -110,6 +115,17 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
     color:#fff;white-space:nowrap}
 .st.run{background:var(--run)} .st.wait{background:var(--wait)}
 .st.bad{background:var(--bad)} .st.done{background:var(--done)}
+/* 对垒面板专用:数据表要能横向滚,绝不能进 .tasks 那套窄屏拆块逻辑 */
+.tblw{overflow-x:auto;margin-top:6px}
+.ptbl{border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.ptbl th,.ptbl td{padding:4px 9px;text-align:right;border-top:1px solid var(--line)}
+.ptbl tr:first-child th{border-top:0}
+.ptbl th{color:var(--dim);font-weight:500}
+.ptbl th:first-child,.ptbl td:first-child{text-align:left}
+.ptbl .gf{color:var(--dim);font-size:10px}
+details.bld{margin-top:8px}
+details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0;user-select:none}
 .msg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;
   line-height:1.75}
 .msg code{background:var(--bg);border:1px solid var(--line);border-radius:4px;
@@ -150,6 +166,7 @@ input[type=range]{width:130px;accent-color:var(--grpo)}
  * 书签形如:  .../#g=<gist登录名>/<gist_id>&k=<base64url密钥>
  */
 const FILE = "sw_sr.json";
+const BL_FILE = "baselines.json";     // 静态对垒数据,同一 gist 的第二个文件,可缺
 const POLL_MS = 60000;
 const BASE = ["grpo", "gigpo", "hgpo", "spectral"];
 const BASE_VARS = {grpo:"--grpo", gigpo:"--gigpo", hgpo:"--hgpo", spectral:"--spectral"};
@@ -220,13 +237,23 @@ async function load(){
   if (!g || !k) throw {kind:"setup"};
   // gist raw 带 max-age=300 的 CDN 缓存:cache-buster + no-store 一起用,
   // 但最坏情况仍可能落后一个 CDN 周期(推送本身是 120s 一次,可接受)。
-  const url = `https://gist.githubusercontent.com/${g}/raw/${FILE}?t=${Date.now()}`;
-  const r = await fetch(url, {cache:"no-store"});
+  const url = f => `https://gist.githubusercontent.com/${g}/raw/${f}?t=${Date.now()}`;
+  const r = await fetch(url(FILE), {cache:"no-store"});
   if (!r.ok) throw {kind:"http", msg:`gist 返回 ${r.status}`};
   const env = await r.json();
   if (!env.iv || !env.ct) throw {kind:"empty"};
-  try { return await decrypt(env, k); }
+  let data;
+  try { data = await decrypt(env, k); }
   catch(e){ throw {kind:"key"}; }
+  // 对垒数据是可选的:没推过(404)或坏了都只是不渲染那一节,绝不拖垮主看板
+  try {
+    const rb = await fetch(url(BL_FILE), {cache:"no-store"});
+    if (rb.ok){
+      const eb = await rb.json();
+      if (eb.iv && eb.ct) data._bl = await decrypt(eb, k);
+    }
+  } catch(e){}
+  return data;
 }
 
 /* ------------------------------------------------------------------ 画图 */
@@ -381,6 +408,167 @@ function wireHover(box, meta){
   svg.addEventListener("pointerleave", leave);
   svg.addEventListener("touchmove", ev => { move(ev); ev.preventDefault(); }, {passive:false});
   svg.addEventListener("touchend", leave);
+}
+
+/* ------------------------------------------------------------- 对垒面板 */
+/* 纯数据驱动:标题、系列名、配色家族、线型、脚注表全部来自密文 payload
+ * (publish_baselines.py 下发)。本文件与研究内容相关的字符串一个都没有 ——
+ * 与臂名/QOS 名的既有约定同一条纪律。
+ * 图形是"质量-算力"散点连线:x/y 都不从 0 起,niceTicks 用不上,
+ * 自带一个任意区间的刻度器。 */
+const blHidden = new Set();
+let blMetas = [];
+
+function rngTicks(a, b, n){
+  const raw = (b - a) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,2.5,5,10].map(m=>m*mag).find(s=>s>=raw) || 10*mag;
+  const out = [];
+  for (let v = Math.ceil(a/step)*step; v <= b + 1e-9; v += step) out.push(v);
+  return out;
+}
+
+function blChart(panel, pi){
+  const {W, H, PAD} = dims();
+  const P = {t:PAD.t, r:PAD.r, b:PAD.b, l:PAD.l + 6};   // y 轴是 3 位小数,多让 6px
+  const vis = panel.series.filter(s => !blHidden.has(pi + ":" + s.label));
+  let pts = vis.flatMap(s => s.pts);
+  if (panel.ref) pts = pts.concat([panel.ref]);
+  if (!pts.length){
+    blMetas.push(null);
+    return `<div class="chartbox blbox"><svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}"
+      text-anchor="middle" fill="var(--dim)" font-size="13">全部隐藏了</text></svg></div>`;
+  }
+  let x0 = Math.min(...pts.map(p=>p.x)), x1 = Math.max(...pts.map(p=>p.x));
+  let y0 = Math.min(...pts.map(p=>p.y)), y1 = Math.max(...pts.map(p=>p.y));
+  const xp = (x1-x0)*0.05 || 1, yp = (y1-y0)*0.07 || 1;
+  x0 -= xp; x1 += xp; y0 -= yp; y1 += yp;
+  const px = v => P.l + (v-x0)/(x1-x0) * (W-P.l-P.r);
+  const py = v => H-P.b - (v-y0)/(y1-y0) * (H-P.t-P.b);
+
+  let g = "";
+  for (const t of rngTicks(y0, y1, 5)){
+    g += `<line x1="${P.l}" y1="${py(t)}" x2="${W-P.r}" y2="${py(t)}"
+           stroke="var(--line)" stroke-width="1"/>
+          <text x="${P.l-6}" y="${py(t)+4}" text-anchor="end" fill="var(--dim)"
+           font-size="10">${t.toFixed(panel.ydec)}</text>`;
+  }
+  for (const t of rngTicks(x0, x1, innerWidth < 640 ? 4 : 7)){
+    g += `<text x="${px(t)}" y="${H-P.b+16}" text-anchor="middle" fill="var(--dim)"
+           font-size="10">${Math.round(t)}</text>`;
+  }
+  g += `<line x1="${P.l}" y1="${H-P.b}" x2="${W-P.r}" y2="${H-P.b}"
+         stroke="var(--axis)" stroke-width="1"/>
+        <text x="${W-P.r}" y="${H-P.b+28}" text-anchor="end" fill="var(--dim)"
+         font-size="10">${panel.xlab} →</text>`;
+
+  const hoverPts = [];
+  for (const s of vis){
+    const c = `var(--pf${s.fam})`;
+    const d = s.pts.map((p,i)=>`${i?"L":"M"}${px(p.x).toFixed(1)} ${py(p.y).toFixed(1)}`).join("");
+    g += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${s.w}"
+           ${s.dash?`stroke-dasharray="${s.dash}"`:""}
+           stroke-linejoin="round" stroke-linecap="round" opacity=".92"/>`;
+    for (const p of s.pts){
+      g += `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="${s.w>=3?4:3}"
+             fill="${c}" stroke="var(--panel)" stroke-width="1.8"/>`;
+      hoverPts.push({X:px(p.x), Y:py(p.y), c, s, p});
+    }
+  }
+  if (panel.ref){
+    const rx = px(panel.ref.x), ry = py(panel.ref.y);
+    g += `<path d="M${rx} ${ry-6} L${rx+6} ${ry} L${rx} ${ry+6} L${rx-6} ${ry} Z"
+           fill="none" stroke="var(--fg2)" stroke-width="2"/>
+          <text x="${rx+9}" y="${ry-7}" fill="var(--fg2)" font-size="10">
+            ${panel.ref.label} ${panel.ref.y.toFixed(panel.ydec)}</text>`;
+  }
+  g += `<g class="hover-g"></g>`;
+  blMetas.push({W, H, hoverPts, ydec: panel.ydec});
+  return `<div class="chartbox blbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
+    <div class="tt"></div></div>`;
+}
+
+// 悬浮:找视口内最近的点(帕累托图上点是主角,不做 crosshair 逐列读数)
+function wireBlHover(box, meta){
+  if (!box || !meta) return;
+  const svg = box.querySelector("svg"), tt = box.querySelector(".tt");
+  const hoverG = svg.querySelector(".hover-g");
+  function move(ev){
+    const t = ev.touches ? ev.touches[0] : ev;
+    const r = svg.getBoundingClientRect();
+    const ux = (t.clientX - r.left) / r.width * meta.W;
+    const uy = (t.clientY - r.top) / r.height * meta.H;
+    let best = null, bd = 1e9;
+    for (const q of meta.hoverPts){
+      const d = (q.X-ux)**2 + (q.Y-uy)**2;
+      if (d < bd){ bd = d; best = q; }
+    }
+    if (!best || bd > 28*28){ leave(); return; }
+    hoverG.innerHTML = `<circle cx="${best.X}" cy="${best.Y}" r="6" fill="none"
+      stroke="${best.c}" stroke-width="2"/>`;
+    const p = best.p;
+    tt.innerHTML = `<div class="hd">${best.s.label} · r=${p.r}</div>
+      <div class="row"><span class="key" style="background:${best.c}"></span>
+        <span class="val">${p.y.toFixed(meta.ydec)}${p.sd?` ±${p.sd.toFixed(meta.ydec)}`:""}</span></div>
+      <div class="row"><span class="nm">${Math.round(p.x)} GFLOPs · ${p.n||"?"} rep</span></div>`;
+    tt.classList.add("show");
+    const boxR = box.getBoundingClientRect();
+    let left = t.clientX - boxR.left + 14, top = t.clientY - boxR.top - tt.offsetHeight - 10;
+    if (left + tt.offsetWidth > boxR.width) left = t.clientX - boxR.left - tt.offsetWidth - 14;
+    if (top < 0) top = t.clientY - boxR.top + 14;
+    tt.style.left = `${Math.max(0,left)}px`;
+    tt.style.top = `${Math.max(0,top)}px`;
+  }
+  function leave(){ tt.classList.remove("show"); hoverG.innerHTML = ""; }
+  svg.addEventListener("pointermove", move);
+  svg.addEventListener("pointerleave", leave);
+  svg.addEventListener("touchmove", ev => { move(ev); ev.preventDefault(); }, {passive:false});
+  svg.addEventListener("touchend", leave);
+}
+
+function blLegend(panel, pi){
+  return `<div class="legend">` + panel.series.map(s => {
+    const k = pi + ":" + s.label;
+    const last = s.pts[s.pts.length-1];
+    return `<div class="lg ${blHidden.has(k)?"off":""}" data-bl="${k}">
+      <span class="sw" style="background:var(--pf${s.fam});
+        ${s.dash?"background:repeating-linear-gradient(90deg,var(--pf"+s.fam+") 0 5px,transparent 5px 8px)":""}"></span>
+      <span class="nm">${s.label}</span>
+      <span class="vl">r=${last.r}: ${last.y.toFixed(panel.ydec)}</span>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+function blTable(panel){
+  const rs = [...new Set(panel.series.flatMap(s=>s.pts.map(p=>p.r)))].sort((a,b)=>a-b);
+  let h = `<tr><th>方法</th>` + rs.map(r=>`<th>r=${r}</th>`).join("") + `</tr>`;
+  for (const s of panel.series){
+    h += `<tr><td>${s.label}</td>` + rs.map(r=>{
+      const p = s.pts.find(p=>p.r===r);
+      return p ? `<td>${p.y.toFixed(panel.ydec)} <span class="gf">(${Math.round(p.x)})</span></td>`
+               : `<td>—</td>`;
+    }).join("") + `</tr>`;
+  }
+  return `<details class="bld"><summary>数据表(${panel.ylab},括号内实测 GFLOPs)</summary>
+    <div class="tblw"><table class="ptbl">${h}</table></div></details>`;
+}
+
+function blPanels(bl){
+  if (!bl || !bl.panels || !bl.panels.length) return "";
+  let h = `<div class="ghead"><h2 class="gt">${bl.heading || ""}</h2>
+    <span class="gs">静态扫描结果,不随轮询更新</span></div>`;
+  bl.panels.forEach((pn, i) => {
+    h += `<div class="panel"><h2>${pn.title}</h2><p class="sub">${pn.sub || ""}</p>
+      ${blChart(pn, i)}${blLegend(pn, i)}${blTable(pn)}</div>`;
+  });
+  const n = bl.note;
+  if (n){
+    let rows = (n.rows || []).map(r =>
+      `<tr>` + r.map((c,j)=>`<td${j?"":' class="tl"'}>${c}</td>`).join("") + `</tr>`).join("");
+    h += `<div class="panel"><h2>${n.title}</h2><p class="sub">${n.text}</p>
+      <div class="tblw"><table class="ptbl">
+        <tr>${(n.head||[]).map(x=>`<th>${x}</th>`).join("")}</tr>${rows}</table></div></div>`;
+  }
+  return h;
 }
 
 /* ------------------------------------------------------------------ 渲染 */
@@ -571,15 +759,24 @@ function render(data){
   refreshGroups(data);
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
   chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
+  blMetas = [];
   root.innerHTML = usagePanel(data) + tasksPanel(data)
-    + GROUPS.map(g => groupPanels(data, g)).join("");
+    + GROUPS.map(g => groupPanels(data, g)).join("")
+    + blPanels(data._bl);
 
-  root.querySelectorAll(".chartbox").forEach((box, i) => wireHover(box, chartMetas[i]));
+  // SR 图和对垒图各有一套 meta 与 hover 逻辑,靠 .blbox 类分流
+  root.querySelectorAll(".chartbox:not(.blbox)").forEach((box, i) => wireHover(box, chartMetas[i]));
+  root.querySelectorAll(".blbox").forEach((box, i) => wireBlHover(box, blMetas[i]));
 
   root.querySelectorAll(".lg").forEach(el=>{
     el.onclick = () => {
-      const a = el.dataset.arm;
-      hidden.has(a) ? hidden.delete(a) : hidden.add(a);
+      if (el.dataset.bl !== undefined){
+        const k = el.dataset.bl;
+        blHidden.has(k) ? blHidden.delete(k) : blHidden.add(k);
+      } else {
+        const a = el.dataset.arm;
+        hidden.has(a) ? hidden.delete(a) : hidden.add(a);
+      }
       render(latest);
     };
   });
