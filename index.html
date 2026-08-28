@@ -694,9 +694,10 @@ function tasksPanel(data){
 }
 
 /* ------------------------------------------------------------- 资源占用 */
-// 只统计本人的占用。配额是**组共享**的,所以"我的/上限"说明的是
-// "我吃掉了多少",不是"还剩多少可用" —— 剩余取决于组里其他人,
-// 这行字必须留着,否则看到 172/750 会误以为还有 578 能用。
+// 统计**全组**的占用(0827 改:此前只统计本人,组里别人把内存额度
+// 占到 96% 时面板还显示 0%,自己的作业被挤在队里排几小时都看不出来)。
+// 本人的份额由密文里的 mine_* 字段下发,在作业数下面单列一行小字;
+// 旧密文没有这些字段,渲染时要判空。
 function bar(used, quota, unit){
   if (!quota) return `<span class="soft">${used}${unit}(该 QOS 无此配额)</span>`;
   const pct = Math.min(100, used / quota * 100);
@@ -712,15 +713,16 @@ function usagePanel(data){
   // 显示用的标签由加密 payload 里的 v.label 下发;缺了就退回中性文案,
   // 绝不回落成 q 本身 —— 那正是要藏的东西。
   const rows = Object.entries(u.by_qos).map(([q, v], i) => `<tr>
-      <td class="tl">${v.label || ("配额 " + (i+1))}<br><span class="soft">${v.n} 个作业在跑</span></td>
+      <td class="tl">${v.label || ("配额 " + (i+1))}<br><span class="soft">全组 ${v.n} 个作业在跑${
+        v.mine_n != null ? `,我 ${v.mine_n} 个(${v.mine_mem_g}G${v.mine_gpu ? ` · GPU ${v.mine_gpu} 张` : ""})` : ""}</span></td>
       <td class="qcell">内存 ${bar(v.mem_g, v.quota_mem_g, "G")}</td>
       <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
     </tr>`).join("");
-  return `<div class="panel"><h2>我的资源占用</h2>
-    <p class="sub">只统计本人的作业 · 采集于 ${ago(Date.now()/1000 - u.updated)} ·
+  return `<div class="panel"><h2>全组资源占用</h2>
+    <p class="sub">统计全组作业(旧密文只含本人,此时数字偏小) ·
+      采集于 ${ago(Date.now()/1000 - u.updated)} ·
       口径是<b>申请值</b>(SLURM 按申请整块划走,实际用多少都一样占配额) ·
-      ⚠️ 配额是<b>全组共享</b>的,百分比是「我吃掉了多少」,
-      不是「还剩多少可用」—— 剩余取决于组里其他人</p>
+      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我</p>
     <table class="tasks"><tbody>${rows}</tbody></table></div>`;
 }
 
