@@ -143,6 +143,24 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .tt .key{width:10px;height:2px;border-radius:1px;flex:none}
 .tt .nm{color:var(--fg2);min-width:56px}
 .tt .val{font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;padding-left:10px}
+/* 折叠钮(每块面板/每个大类)与 ✕ 隐藏钮(终态任务行)。两者的状态都记在
+ * localStorage(sr.collapsed / sr.dismissed),关页重开保持 —— 里面只有
+ * 面板键名与 SLURM 作业号,不含任何研究内容,也永远不会被回传。 */
+.phead{display:flex;align-items:baseline;gap:7px}
+.phead h2{margin:0}
+.cbtn{background:none;border:0;padding:0 2px;color:var(--dim);cursor:pointer;
+  font-size:11px;line-height:inherit;width:18px;flex:none;text-align:left}
+.cbtn:hover{color:var(--fg);border:0}
+.ghead .cbtn{font-size:12px}
+.panel.closed{padding-bottom:12px}
+.tsec{display:flex;align-items:baseline;gap:7px;font-size:12px;font-weight:600;
+  color:var(--fg2);margin:12px 0 4px}
+.tsec .soft{font-weight:400}
+.xbtn{background:none;border:0;color:var(--dim);cursor:pointer;font-size:13px;
+  padding:2px 6px;line-height:1}
+.xbtn:hover{color:var(--crit);border:0}
+.tasks .xc{width:26px;text-align:right}
+.sub a{color:var(--fg2)}
 </style>
 </head>
 <body>
@@ -209,6 +227,32 @@ function refreshGroups(data){
 
 const $ = s => document.querySelector(s);
 const root = $("#root");
+
+/* ------------------------------------------------------- 本地记忆(2026-08-29)
+ * 折叠了哪些面板、✕ 掉了哪些任务、隐藏了哪些图例、平滑系数 —— 全记在
+ * localStorage,关页重开保持。这是**单浏览器本地**的:换设备不同步,
+ * 也绝不回传到 gist/Pages。读写都包 try(隐私模式/禁存储时页面照常渲染)。 */
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k);
+                  return v === null ? d : JSON.parse(v); } catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+};
+const dismissed = new Set(store.get("sr.dismissed", []));   // ✕ 掉的作业号
+const collapsed = new Set(store.get("sr.collapsed", []));   // 折叠的面板键
+const isClosed = k => collapsed.has(k);
+function cbtn(k){
+  return `<button class="cbtn" data-c="${k}" title="折叠/展开">${isClosed(k) ? "▸" : "▾"}</button>`;
+}
+/* 面板外壳:标题旁带折叠钮;折叠时**不渲染**内容体 —— 不是 display:none。
+ * 这一点是承重的:chart()/blChart() 按渲染顺序往 chartMetas/blMetas 里
+ * push,wireHover 再按同一顺序接回去,跳过渲染两边才对得上号。 */
+function panelBox(key, title, sub, bodyFn){
+  const closed = isClosed(key);
+  return `<div class="panel${closed ? " closed" : ""}">`
+    + `<div class="phead">${cbtn(key)}<h2>${title}</h2></div>`
+    + (closed ? "" : `<p class="sub">${sub}</p>` + bodyFn())
+    + `</div>`;
+}
 
 function hashParams(){
   const h = new URLSearchParams(location.hash.replace(/^#/, ""));
@@ -416,7 +460,7 @@ function wireHover(box, meta){
  * 与臂名/QOS 名的既有约定同一条纪律。
  * 图形是"质量-算力"散点连线:x/y 都不从 0 起,niceTicks 用不上,
  * 自带一个任意区间的刻度器。 */
-const blHidden = new Set();
+const blHidden = new Set(store.get("sr.blHidden", []));
 let blMetas = [];
 
 function rngTicks(a, b, n){
@@ -554,26 +598,27 @@ function blTable(panel){
 
 function blPanels(bl){
   if (!bl || !bl.panels || !bl.panels.length) return "";
-  let h = `<div class="ghead"><h2 class="gt">${bl.heading || ""}</h2>
+  let h = `<div class="ghead">${cbtn("bl")}<h2 class="gt">${bl.heading || ""}</h2>
     <span class="gs">静态扫描结果,不随轮询更新</span></div>`;
+  if (isClosed("bl")) return h;
   bl.panels.forEach((pn, i) => {
-    h += `<div class="panel"><h2>${pn.title}</h2><p class="sub">${pn.sub || ""}</p>
-      ${blChart(pn, i)}${blLegend(pn, i)}${blTable(pn)}</div>`;
+    h += panelBox("bl:" + i, pn.title, pn.sub || "",
+      () => blChart(pn, i) + blLegend(pn, i) + blTable(pn));
   });
   const n = bl.note;
   if (n){
     let rows = (n.rows || []).map(r =>
       `<tr>` + r.map((c,j)=>`<td${j?"":' class="tl"'}>${c}</td>`).join("") + `</tr>`).join("");
-    h += `<div class="panel"><h2>${n.title}</h2><p class="sub">${n.text}</p>
-      <div class="tblw"><table class="ptbl">
-        <tr>${(n.head||[]).map(x=>`<th>${x}</th>`).join("")}</tr>${rows}</table></div></div>`;
+    h += panelBox("bl:note", n.title, n.text,
+      () => `<div class="tblw"><table class="ptbl">
+        <tr>${(n.head||[]).map(x=>`<th>${x}</th>`).join("")}</tr>${rows}</table></div>`);
   }
   return h;
 }
 
 /* ------------------------------------------------------------------ 渲染 */
-const hidden = new Set();
-let smooth = 0.85, latest = null;
+const hidden = new Set(store.get("sr.hiddenArms", []));
+let smooth = store.get("sr.smooth", 0.85), latest = null;
 
 function dur(sec){
   if (sec < 90) return `${Math.round(sec)} 秒`;
@@ -631,7 +676,12 @@ function legend(data, armKeys){
 // 纯数据驱动:标签/状态全部来自解密后的 payload,本文件不含任何任务内容。
 const STATE_ZH = {RUNNING:"运行中", PENDING:"排队", COMPLETED:"已完成",
                   FAILED:"失败", CANCELLED:"已取消", TIMEOUT:"超时",
-                  UNKNOWN:"未知"};
+                  OUT_OF_MEMORY:"内存超限", NODE_FAIL:"节点故障",
+                  PREEMPTED:"被抢占", UNKNOWN:"未知"};
+// 终态 = 不会再变的状态。只有这些行给 ✕:在跑/排队的任务按号隐藏太危险 ——
+// 号会复用语义(续跑接班),而且"看不见但还在烧配额"正是看板要防的事。
+const TERM = new Set(["COMPLETED","CANCELLED","FAILED","TIMEOUT",
+                      "OUT_OF_MEMORY","NODE_FAIL","PREEMPTED","BOOT_FAIL","DEADLINE"]);
 // SLURM 的时间戳形如 2026-08-19T22:00:08 → "08-19 22:00"
 function fmtStamp(s){
   return (s || "").slice(5, 16).replace("T", " ");
@@ -641,13 +691,10 @@ function fmtStamp2(ts){
   const d = new Date(ts*1000), p = n => String(n).padStart(2,"0");
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-function tasksPanel(data){
-  const t = data.tasks;
-  if (!t || !t.jobs || !t.jobs.length) return "";
-  const rows = t.jobs.map(j=>{
+function taskRow(j){
     const s = (j.state || "UNKNOWN").split(" ")[0];
     const cls = s === "RUNNING" ? "run" : s === "PENDING" ? "wait"
-              : s === "COMPLETED" ? "done" : "bad";
+              : (s === "COMPLETED" || s === "CANCELLED") ? "done" : "bad";
     // 三类"预计"可靠性差一个数量级,分开渲染 —— 不能让预估冒充事实:
     //   进度ETA(按实测步进节奏算)  > 墙钟到期(硬事实,但答的是"何时被砍")
     //   > SLURM 起跑预估(实测漂过四次,标灰并注明)
@@ -681,16 +728,40 @@ function tasksPanel(data){
       }
     }
     if (j.note) bits.push(`<span class="soft">${j.note}</span>`);
+    // ✕ 只给终态行;点掉的作业号记进 localStorage,永久不再显示(可整体恢复)
+    const x = TERM.has(s)
+      ? `<button class="xbtn" data-x="${j.id}" title="从看板永久隐藏(面板底部可恢复)">✕</button>` : "";
     return `<tr><td class="tl">${j.label || j.id}</td>
       <td><span class="st ${cls}">${STATE_ZH[s] || s}</span></td>
-      <td class="tx">${bits.join(" · ")}</td></tr>`;
-  }).join("");
-  // 已完成/已取消的行由推送端过滤掉(面板只回答"还有什么在跑、什么时候完")。
-  // 但要留一句计数 —— 否则找不到某个任务时,分不清是"办完了"还是"没提交上"。
-  const gone = t.hidden ? ` · 另有 ${t.hidden} 项已完成/已取消未列出` : "";
-  return `<div class="panel"><h2>任务进度</h2>
-    <p class="sub">SLURM 实时状态 · 采集于 ${ago(Date.now()/1000 - t.updated)}${gone}</p>
-    <table class="tasks"><tbody>${rows}</tbody></table></div>`;
+      <td class="tx">${bits.join(" · ")}</td><td class="xc">${x}</td></tr>`;
+}
+
+function tasksPanel(data){
+  const t = data.tasks;
+  if (!t || !t.jobs || !t.jobs.length) return "";
+  // 推送端已按提交时间倒序;这里再排一遍,兼容没有 submit 字段的旧密文
+  const all = t.jobs.slice().sort((a,b) => (b.submit||0) - (a.submit||0));
+  const jobs = all.filter(j => !dismissed.has(String(j.id)));
+  const nx = all.length - jobs.length;
+  // 分类由密文的 cat 字段下发(gpu=申请了 GPU 的训练任务,svc=看门狗/服务);
+  // 旧密文没有 cat 时按 kind 兜底。两栏各自可折叠。
+  const cat = j => j.cat || (j.kind === "service" ? "svc" : "gpu");
+  let body = "";
+  for (const [ck, cl] of [["gpu", "GPU 训练"], ["svc", "看门狗 / 常驻服务(无 GPU)"]]){
+    const rows = jobs.filter(j => cat(j) === ck);
+    if (!rows.length) continue;
+    const k = "t:" + ck;
+    body += `<div class="tsec">${cbtn(k)}<span>${cl}</span><span class="soft">${rows.length} 项</span></div>`;
+    if (!isClosed(k))
+      body += `<table class="tasks"><tbody>${rows.map(taskRow).join("")}</tbody></table>`;
+  }
+  const foot = [];
+  if (nx) foot.push(`你已 ✕ 隐藏 ${nx} 项(<a href="#" id="undismiss">全部恢复</a>)`);
+  if (t.hidden) foot.push(`更早的 ${t.hidden} 项终态作业未下发`);
+  if (foot.length) body += `<p class="sub" style="margin:8px 0 2px">${foot.join(" · ")}</p>`;
+  return panelBox("t", "任务进度",
+    `SLURM 实时状态 · 近 14 天提交的作业自动收录 · 采集于 ${ago(Date.now()/1000 - t.updated)}`,
+    () => body);
 }
 
 /* ------------------------------------------------------------- 资源占用 */
@@ -718,42 +789,38 @@ function usagePanel(data){
       <td class="qcell">内存 ${bar(v.mem_g, v.quota_mem_g, "G")}</td>
       <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
     </tr>`).join("");
-  return `<div class="panel"><h2>全组资源占用</h2>
-    <p class="sub">统计全组作业(旧密文只含本人,此时数字偏小) ·
+  return panelBox("u", "全组资源占用",
+    `统计全组作业(旧密文只含本人,此时数字偏小) ·
       采集于 ${ago(Date.now()/1000 - u.updated)} ·
       口径是<b>申请值</b>(SLURM 按申请整块划走,实际用多少都一样占配额) ·
-      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我</p>
-    <table class="tasks"><tbody>${rows}</tbody></table></div>`;
+      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我`,
+    () => `<table class="tasks"><tbody>${rows}</tbody></table>`);
 }
 
 // 一个任务组的三块面板。val/score 是 ScienceWorld 的 partial-credit 口径,
 // ALFWorld 根本不写这个 tag ⟹ 整组都没有 score 数据时不摆这块面板,
 // 免得"暂无数据"被读成"这组还没评"。
 function groupPanels(data, g){
+  // 折叠键用组 key(密文下发的短代号,localStorage 里不落研究内容全名)
+  const gk = "g:" + (g.key || "_");
+  const head = `<div class="ghead">${cbtn(gk)}<h2 class="gt">${g.label || "曲线"}</h2>
+      <span class="gs">${g.arms.length} 臂</span></div>`;
+  if (isClosed(gk)) return head;                 // 组折叠 = 整组面板都不渲染
   const hasScore = g.arms.some(a => ((((data.arms[a]||{}).score)||{}).s||[]).length);
-  return `
-    ${g.label ? `<div class="ghead"><h2 class="gt">${g.label}</h2>
-      <span class="gs">${g.arms.length} 臂</span></div>` : ""}
-    <div class="panel">
-      <h2>验证 SR</h2>
-      <p class="sub">val/success_rate · 每 10 步一次 · 这条才是可写进论文的口径</p>
-      ${chart(data, g.arms, "val", 0, hidden)}
-      ${legend(data, g.arms)}
-    </div>
-    ${hasScore ? `<div class="panel">
-      <h2>验证 Score</h2>
-      <p class="sub">val/score · 同一批评测的 partial-credit 分数 ·
-        SR 还卡在 0 的时候它已经能分出高下</p>
-      ${chart(data, g.arms, "score", 0, hidden)}
-    </div>` : ""}
-    <div class="panel">
-      <h2>训练 SR</h2>
-      <p class="sub">episode/success_rate · 每步 · 细线原始,粗线 EMA</p>
-      ${chart(data, g.arms, "train", smooth, hidden)}
-      <div class="ctl"><span>平滑</span>
+  return head
+    + panelBox(gk + ":val", "验证 SR",
+        "val/success_rate · 每 10 步一次 · 这条才是可写进论文的口径",
+        () => chart(data, g.arms, "val", 0, hidden) + legend(data, g.arms))
+    + (hasScore ? panelBox(gk + ":score", "验证 Score",
+        `val/score · 同一批评测的 partial-credit 分数 ·
+        SR 还卡在 0 的时候它已经能分出高下`,
+        () => chart(data, g.arms, "score", 0, hidden)) : "")
+    + panelBox(gk + ":train", "训练 SR",
+        "episode/success_rate · 每步 · 细线原始,粗线 EMA",
+        () => chart(data, g.arms, "train", smooth, hidden)
+          + `<div class="ctl"><span>平滑</span>
         <input type="range" class="smr" min="0" max="0.98" step="0.02" value="${smooth}">
-        <span class="smv">${smooth.toFixed(2)}</span></div>
-    </div>`;
+        <span class="smv">${smooth.toFixed(2)}</span></div>`);
 }
 
 function render(data){
@@ -775,9 +842,11 @@ function render(data){
       if (el.dataset.bl !== undefined){
         const k = el.dataset.bl;
         blHidden.has(k) ? blHidden.delete(k) : blHidden.add(k);
+        store.set("sr.blHidden", [...blHidden]);
       } else {
         const a = el.dataset.arm;
         hidden.has(a) ? hidden.delete(a) : hidden.add(a);
+        store.set("sr.hiddenArms", [...hidden]);
       }
       render(latest);
     };
@@ -785,8 +854,32 @@ function render(data){
   // 每组一个平滑滑块(id 会重复,所以用 class);它们共用同一个全局
   // smooth —— 拖任意一个,重渲染时其余的跟着回正。
   root.querySelectorAll(".smr").forEach(el=>{
-    el.oninput = e => { smooth = +e.target.value; render(latest); };
+    el.oninput = e => { smooth = +e.target.value; store.set("sr.smooth", smooth); render(latest); };
   });
+  // 折叠钮:面板/大类/任务分栏共用一套;键进 localStorage,关页重开保持
+  root.querySelectorAll(".cbtn").forEach(el=>{
+    el.onclick = () => {
+      const k = el.dataset.c;
+      collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k);
+      store.set("sr.collapsed", [...collapsed]);
+      render(latest);
+    };
+  });
+  // ✕:终态任务永久隐藏(按作业号记,恢复走面板底部"全部恢复")
+  root.querySelectorAll(".xbtn").forEach(el=>{
+    el.onclick = () => {
+      dismissed.add(String(el.dataset.x));
+      store.set("sr.dismissed", [...dismissed]);
+      render(latest);
+    };
+  });
+  const ud = root.querySelector("#undismiss");
+  if (ud) ud.onclick = ev => {
+    ev.preventDefault();
+    dismissed.clear();
+    store.set("sr.dismissed", []);
+    render(latest);
+  };
 }
 
 function showError(e){
