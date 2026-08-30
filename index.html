@@ -143,9 +143,9 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .tt .key{width:10px;height:2px;border-radius:1px;flex:none}
 .tt .nm{color:var(--fg2);min-width:56px}
 .tt .val{font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;padding-left:10px}
-/* 折叠钮(每块面板/每个大类)与 ✕ 隐藏钮(终态任务行)。两者的状态都记在
- * localStorage(sr.collapsed / sr.dismissed),关页重开保持 —— 里面只有
- * 面板键名与 SLURM 作业号,不含任何研究内容,也永远不会被回传。 */
+/* 折叠钮(每块面板/每个大类)与 ✕ 隐藏钮(终态任务行)。两者的状态先落
+ * localStorage,再加密同步到 gist(见下面"界面状态"一节)—— 明文永远只在
+ * 本机与内存里,gist 上是密文,公开仓库这份源码里一个作业号都没有。 */
 .phead{display:flex;align-items:baseline;gap:7px}
 .phead h2{margin:0}
 .cbtn{background:none;border:0;padding:0 2px;color:var(--dim);cursor:pointer;
@@ -161,6 +161,12 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .xbtn:hover{color:var(--crit);border:0}
 .tasks .xc{width:26px;text-align:right}
 .sub a{color:var(--fg2)}
+/* 同步指示器:平时是一行灰字,点一下强制立刻同步一次 */
+.sync{background:none;border:0;padding:0 0 0 10px;color:var(--dim);cursor:pointer;
+  font-size:12px;font-variant-numeric:tabular-nums}
+.sync:hover{border:0;color:var(--fg2)}
+.sync.bad{color:var(--crit)}
+.sync.bad:hover{color:var(--crit)}
 </style>
 </head>
 <body>
@@ -168,6 +174,7 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
   <header>
     <h1>RL 训练看板</h1>
     <span class="meta" id="stamp"></span>
+    <button class="sync" id="sync"></button>
     <span class="spacer"></span>
     <button id="refresh">刷新</button>
   </header>
@@ -181,10 +188,14 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
  *   · fragment 永远不会随 HTTP 请求发出(GitHub Pages / gist CDN 都看不到);
  *   · 因此这个公开页面本身不泄露"数据在哪"和"怎么解开",
  *     陌生人打开只会看到下面那段"缺参数"提示。
- * 书签形如:  .../#g=<gist登录名>/<gist_id>&k=<base64url密钥>
+ * 书签形如:  .../#g=<gist登录名>/<gist_id>&k=<密钥>[&t=<gist写入token>]
+ *   · &t= 是可选的第三段:给了就能把界面状态(折叠/隐藏/平滑)写回 gist,
+ *     从而在电脑端和手机端之间同步;不给则只收不发(仍然会读到另一端的
+ *     改动,只是自己这台的改动留在本机)。
  */
 const FILE = "sw_sr.json";
 const BL_FILE = "baselines.json";     // 静态对垒数据,同一 gist 的第二个文件,可缺
+const UI_FILE = "ui_state.json";      // 界面状态密文,同一 gist 的第三个文件,可缺
 const POLL_MS = 60000;
 const BASE = ["grpo", "gigpo", "hgpo", "spectral"];
 const BASE_VARS = {grpo:"--grpo", gigpo:"--gigpo", hgpo:"--hgpo", spectral:"--spectral"};
@@ -228,18 +239,114 @@ function refreshGroups(data){
 const $ = s => document.querySelector(s);
 const root = $("#root");
 
-/* ------------------------------------------------------- 本地记忆(2026-08-29)
- * 折叠了哪些面板、✕ 掉了哪些任务、隐藏了哪些图例、平滑系数 —— 全记在
- * localStorage,关页重开保持。这是**单浏览器本地**的:换设备不同步,
- * 也绝不回传到 gist/Pages。读写都包 try(隐私模式/禁存储时页面照常渲染)。 */
+/* --------------------------------------------- 界面状态(本地 + 跨设备同步)
+ * 折叠了哪些面板、✕ 掉了哪些任务、隐藏了哪些图例、平滑系数 —— 先落
+ * localStorage(离线也立刻生效、关页重开保持),再加密推回同一个 gist 的
+ * 第三个文件。0830 加,起因是同一批终态任务要在电脑端和手机端各 ✕ 一遍。
+ *
+ * 合并规则是 LWW-map:每个条目 {v:值, t:写入时刻ms}。
+ *   · 集合类拍平成 "命名空间|成员" 一个条目;取消一项写 v:0 的**墓碑**,
+ *     而不是删条目 —— 直接删的话,另一端那份旧的 v:1 下次合并就把它复活;
+ *   · 两端改不同条目互不影响,改同一条目则时间戳晚的赢;
+ *   · 于是 gist raw 的 CDN 缓存(max-age=300)读到旧值也无害:旧时间戳打不过
+ *     本地的新时间戳,不会把刚刚做过的操作回滚成上一轮的样子。
+ * 推上去的是 AES-GCM 密文(和主 payload 共用 #k= 那把密钥),gist 上依旧
+ * 看不到一个明文的作业号或面板名。读写都包 try(隐私模式/禁存储照常渲染)。 */
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k);
                   return v === null ? d : JSON.parse(v); } catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
 };
-const dismissed = new Set(store.get("sr.dismissed", []));   // ✕ 掉的作业号
-const collapsed = new Set(store.get("sr.collapsed", []));   // 折叠的面板键
+const TOMB_MS = 180 * 86400e3;      // 墓碑保留期,见 pruneState()
+let ST = store.get("sr.state", null);
+if (!ST || !ST.items) ST = migrate();
+
+/* 0829 那版(每个开关一个 localStorage 键)的状态搬进 LWW-map,每台设备搬
+ * 一次。时间戳给 1 而不是 now:另一端任何一次真实操作都该赢过"这台机器
+ * 碰巧后打开页面"。两端都还是迁移值(t 都是 1)时按 mergeState 的并集规则
+ * 收,即"任一端隐藏过的就算隐藏" —— 比随机一端全胜合理。 */
+function migrate(){
+  const items = {};
+  const seed = (ns, arr) => (arr || []).forEach(m => { items[ns + "|" + m] = {v:1, t:1}; });
+  seed("d", store.get("sr.dismissed", []));
+  seed("c", store.get("sr.collapsed", []));
+  seed("h", store.get("sr.hiddenArms", []));
+  seed("b", store.get("sr.blHidden", []));
+  const sm = store.get("sr.smooth", null);
+  if (sm !== null) items["smooth"] = {v: sm, t: 1};
+  return {items};
+}
+
+// 命名空间 -> 内存里的 Set(渲染代码照旧直接读这四个 Set 和 smooth)
+const dismissed = new Set();      // ✕ 掉的作业号
+const collapsed = new Set();      // 折叠的面板键
+const hidden    = new Set();      // 隐藏的 SR 曲线(臂 key)
+const blHidden  = new Set();      // 隐藏的对垒曲线("面板序号:系列名")
+const SETS = {d: dismissed, c: collapsed, h: hidden, b: blHidden};
+let smooth = 0.85;
+function applyState(){
+  for (const set of Object.values(SETS)) set.clear();
+  smooth = 0.85;
+  for (const [key, e] of Object.entries(ST.items)){
+    if (!e || !e.v) continue;                       // 墓碑
+    const i = key.indexOf("|");                     // 成员名里可能有 "|",只切第一个
+    if (i < 0){ if (key === "smooth") smooth = e.v; continue; }
+    const set = SETS[key.slice(0, i)];
+    if (set) set.add(key.slice(i + 1));
+  }
+}
+applyState();
 const isClosed = k => collapsed.has(k);
+
+/* 所有界面操作走这三个:改条目 -> commit() 落本地并排一次防抖推送。
+ * 推送失败不影响本地(离线照常用,联网后下一次操作或轮询会把它带上去)。 */
+function setItem(key, v){ ST.items[key] = {v, t: Date.now()}; }
+function flag(ns, member, on){ setItem(ns + "|" + member, on ? 1 : 0); }
+function commit(){ applyState(); store.set("sr.state", ST); schedulePush(); }
+
+/* 远端那份并进本地。返回 true = 有条目变了(调用方要重渲染)。 */
+function mergeState(remote){
+  if (!remote || !remote.items) return false;
+  let changed = false, ahead = false;
+  for (const [key, r] of Object.entries(remote.items)){
+    if (!r || typeof r.t !== "number") continue;
+    const l = ST.items[key];
+    // 时间戳不同 -> 晚的赢。一样时分两种:
+    //   · 都是迁移值(t=1)-> 取"开着"的,即两端老状态的并集;
+    //   · 都是真实操作、恰好同一毫秒 -> 按值定死一个方向(取消赢),两端各自
+    //     算出同一个赢家。若改成"保留本地",两端会各留各的,永远不收敛。
+    let win;
+    if (!l) win = true;
+    else if (r.t !== l.t) win = r.t > l.t;
+    else if (l.t === 1) win = !!r.v && !l.v;
+    else win = String(r.v) < String(l.v);
+    if (win){
+      if (l && l.v !== r.v) changed = true;
+      else if (!l && r.v) changed = true;
+      ST.items[key] = {v: r.v, t: r.t};
+    }
+  }
+  // 本地有而远端没有(或本地更新)的条目要主动推上去,否则两端各改各的之后
+  // 谁也不会再推,对方永远收不到 —— 只靠"操作时推"是收敛不了的。
+  for (const [key, l] of Object.entries(ST.items)){
+    const r = remote.items[key];
+    if (!r || l.t > r.t || l.v !== r.v){ ahead = true; break; }
+  }
+  pruneState();
+  store.set("sr.state", ST);
+  applyState();
+  // CDN 给的可能是自己刚推上去那一版之前的快照,这时 ahead 恒为真;拿上次
+  // 推成功的快照比一比,一样就别推 —— 否则缓存没过期的这几分钟里每轮都白推。
+  if (ahead && JSON.stringify(ST) !== lastPushed) schedulePush();
+  return changed;
+}
+/* 墓碑不清的话,一年下来光作业号就好几千条。半年以上的墓碑丢掉 ——
+ * 代价写清楚:某台设备超过半年没打开过,它那份旧的 v:1 会复活一次。 */
+function pruneState(){
+  const cut = Date.now() - TOMB_MS;
+  for (const [key, e] of Object.entries(ST.items))
+    if (e && !e.v && e.t > 1 && e.t < cut) delete ST.items[key];
+}
 function cbtn(k){
   return `<button class="cbtn" data-c="${k}" title="折叠/展开">${isClosed(k) ? "▸" : "▾"}</button>`;
 }
@@ -256,7 +363,7 @@ function panelBox(key, title, sub, bodyFn){
 
 function hashParams(){
   const h = new URLSearchParams(location.hash.replace(/^#/, ""));
-  return {g: h.get("g"), k: h.get("k")};
+  return {g: h.get("g"), k: h.get("k"), t: h.get("t")};
 }
 
 /* ------------------------------------------------------------------ 解密 */
@@ -267,12 +374,27 @@ function unb64u(s){
   for (let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+function b64u(bytes){
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
 async function decrypt(envelope, keyB64){
   const key = await crypto.subtle.importKey(
     "raw", unb64u(keyB64), {name:"AES-GCM"}, false, ["decrypt"]);
   const pt = await crypto.subtle.decrypt(
     {name:"AES-GCM", iv: unb64u(envelope.iv)}, key, unb64u(envelope.ct));
   return JSON.parse(new TextDecoder().decode(pt));
+}
+/* 回写方向的加密。信封字段与推送端 publish_sr.py 的 encrypt() 一字不差,
+ * 两边写的是同一把密钥下同一种格式,谁也不用认对方是"特殊来源"。 */
+async function encrypt(obj, keyB64){
+  const key = await crypto.subtle.importKey(
+    "raw", unb64u(keyB64), {name:"AES-GCM"}, false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key,
+    new TextEncoder().encode(JSON.stringify(obj)));
+  return {v:1, alg:"A256GCM", iv:b64u(iv), ct:b64u(new Uint8Array(ct))};
 }
 
 /* ------------------------------------------------------------------ 取数 */
@@ -297,7 +419,72 @@ async function load(){
       if (eb.iv && eb.ct) data._bl = await decrypt(eb, k);
     }
   } catch(e){}
+  // 界面状态同样是可选的:没推过(404)、解不开、格式怪 —— 一律退回本机那份,
+  // 绝不因为同步出问题而看不到数据。读走 raw(不需要 token),所以没配 &t=
+  // 的设备也能收到另一端的折叠/隐藏。
+  try {
+    const ru = await fetch(url(UI_FILE), {cache:"no-store"});
+    if (ru.ok){
+      const eu = await ru.json();
+      if (eu.iv && eu.ct) mergeState(await decrypt(eu, k));
+    }
+  } catch(e){}
   return data;
+}
+
+/* ------------------------------------------------------------ 状态回写
+ * 写要 token:gist 的 PATCH 走 api.github.com,而 fragment 里的 &t= 和 &k=
+ * 一样不会随请求发给 Pages。PATCH 的 files 只写 UI_FILE 这一个文件名 ——
+ * 和推送端只写 sw_sr.json 是同一个约定,两边互不覆盖。 */
+let pushT = null, pushing = false, pushMore = false, lastPushed = "";
+function schedulePush(){
+  clearTimeout(pushT);
+  // 防抖 1.2s:平滑滑块拖一次能触发几十个 oninput,不能一个一个 PATCH
+  pushT = setTimeout(pushState, 1200);
+}
+async function pushState(){
+  const {g, k, t} = hashParams();
+  if (!g || !k) return;
+  if (!t){ setSync("ro"); return; }
+  if (pushing){ pushMore = true; return; }
+  pushing = true; setSync("busy");
+  try {
+    const snap = JSON.stringify(ST);
+    const env = await encrypt(ST, k);
+    const r = await fetch(`https://api.github.com/gists/${g.split("/").pop()}`, {
+      method: "PATCH", cache: "no-store",
+      headers: {"Authorization": `Bearer ${t}`,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Content-Type": "application/json"},
+      body: JSON.stringify({files: {[UI_FILE]: {content: JSON.stringify(env)}}})
+    });
+    if (!r.ok) throw new Error(`gist 写回 ${r.status}`);
+    lastPushed = snap;
+    setSync("ok");
+  } catch(e){
+    setSync("bad", e.message || String(e));
+  }
+  pushing = false;
+  if (pushMore){ pushMore = false; schedulePush(); }
+}
+/* 头部那行小灰字。状态说人话,失败要看得见 —— 静默失败的同步比没有同步糟:
+ * 你会以为另一端已经跟上了。 */
+function setSync(kind, msg){
+  const el = $("#sync");
+  if (!el) return;
+  const hhmm = () => { const d = new Date(), p = n => String(n).padStart(2,"0");
+                       return `${p(d.getHours())}:${p(d.getMinutes())}`; };
+  const T = {
+    ro:   ["只收不发", "书签里没有 &t=<token>:这台设备会收到另一端的改动,但自己的改动只留在本机。集群上跑 publish_sr.py --bookmark 取带 token 的书签。"],
+    idle: ["同步就绪", "折叠/隐藏/✕ 会自动同步到你的另一台设备"],
+    busy: ["同步中…", ""],
+    ok:   [`已同步 ${hhmm()}`, "折叠/隐藏/平滑已写回 gist,另一端下次刷新就跟上"],
+    bad:  ["同步失败", msg || ""]
+  }[kind] || ["", ""];
+  el.textContent = T[0];
+  el.title = T[1];
+  el.classList.toggle("bad", kind === "bad");
 }
 
 /* ------------------------------------------------------------------ 画图 */
@@ -460,7 +647,6 @@ function wireHover(box, meta){
  * 与臂名/QOS 名的既有约定同一条纪律。
  * 图形是"质量-算力"散点连线:x/y 都不从 0 起,niceTicks 用不上,
  * 自带一个任意区间的刻度器。 */
-const blHidden = new Set(store.get("sr.blHidden", []));
 let blMetas = [];
 
 function rngTicks(a, b, n){
@@ -617,8 +803,7 @@ function blPanels(bl){
 }
 
 /* ------------------------------------------------------------------ 渲染 */
-const hidden = new Set(store.get("sr.hiddenArms", []));
-let smooth = store.get("sr.smooth", 0.85), latest = null;
+let latest = null;
 
 function dur(sec){
   if (sec < 90) return `${Math.round(sec)} 秒`;
@@ -841,44 +1026,41 @@ function render(data){
     el.onclick = () => {
       if (el.dataset.bl !== undefined){
         const k = el.dataset.bl;
-        blHidden.has(k) ? blHidden.delete(k) : blHidden.add(k);
-        store.set("sr.blHidden", [...blHidden]);
+        flag("b", k, !blHidden.has(k));
       } else {
         const a = el.dataset.arm;
-        hidden.has(a) ? hidden.delete(a) : hidden.add(a);
-        store.set("sr.hiddenArms", [...hidden]);
+        flag("h", a, !hidden.has(a));
       }
-      render(latest);
+      commit(); render(latest);
     };
   });
   // 每组一个平滑滑块(id 会重复,所以用 class);它们共用同一个全局
   // smooth —— 拖任意一个,重渲染时其余的跟着回正。
   root.querySelectorAll(".smr").forEach(el=>{
-    el.oninput = e => { smooth = +e.target.value; store.set("sr.smooth", smooth); render(latest); };
+    el.oninput = e => { setItem("smooth", +e.target.value); commit(); render(latest); };
   });
-  // 折叠钮:面板/大类/任务分栏共用一套;键进 localStorage,关页重开保持
+  // 折叠钮:面板/大类/任务分栏共用一套;状态跟着同步到另一台设备
   root.querySelectorAll(".cbtn").forEach(el=>{
     el.onclick = () => {
       const k = el.dataset.c;
-      collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k);
-      store.set("sr.collapsed", [...collapsed]);
-      render(latest);
+      flag("c", k, !collapsed.has(k));
+      commit(); render(latest);
     };
   });
   // ✕:终态任务永久隐藏(按作业号记,恢复走面板底部"全部恢复")
   root.querySelectorAll(".xbtn").forEach(el=>{
     el.onclick = () => {
-      dismissed.add(String(el.dataset.x));
-      store.set("sr.dismissed", [...dismissed]);
-      render(latest);
+      flag("d", String(el.dataset.x), true);
+      commit(); render(latest);
     };
   });
   const ud = root.querySelector("#undismiss");
   if (ud) ud.onclick = ev => {
     ev.preventDefault();
-    dismissed.clear();
-    store.set("sr.dismissed", []);
-    render(latest);
+    // 逐条写墓碑,不是清空 —— 清空的话另一端那份 v:1 会在下次合并时
+    // 把这些作业重新藏起来,"全部恢复"就成了刷新一下又没了。
+    [...dismissed].forEach(id => flag("d", id, false));
+    commit(); render(latest);
   };
 }
 
@@ -889,8 +1071,10 @@ function showError(e){
       <b>缺参数。</b>这个页面本身不含任何数据来源 —— gist 地址和解密密钥都在书签
       URL 的 <code>#</code> 片段里,而片段不会发给任何服务器。<br><br>
       正确的地址形如:<br>
-      <code>${location.origin}${location.pathname}#g=你的登录名/gist_id&amp;k=密钥</code>
-      <br><br>这两个值由集群上的 <code>publish_sr.py --create-gist</code> 打印。</div>`;
+      <code>${location.origin}${location.pathname}#g=你的登录名/gist_id&amp;k=密钥&amp;t=写入token</code>
+      <br><br>前两个值由集群上的 <code>publish_sr.py --create-gist</code> 生成,完整书签用
+      <code>publish_sr.py --bookmark</code> 取。<code>t=</code> 可选,给了才能把
+      折叠/隐藏这类界面操作同步到你的另一台设备。</div>`;
   } else if (e.kind === "key"){
     root.innerHTML = `<div class="msg err"><b>解不开。</b>密钥(<code>#k=</code>)与
       推上去的数据对不上 —— 多半是换过密钥后没更新书签,或 URL 被截断过。</div>`;
@@ -912,7 +1096,10 @@ addEventListener("resize", () => {          // 转屏要换 viewBox 档位,否�
   rz = setTimeout(() => { if (latest) render(latest); }, 200);
 });
 $("#refresh").onclick = tick;
+// 点指示器 = 立刻收一次 + 立刻发一次(不等 60s 轮询,也不等 1.2s 防抖)
+$("#sync").onclick = () => { tick(); clearTimeout(pushT); pushState(); };
 addEventListener("hashchange", tick);
+setSync(hashParams().t ? "idle" : "ro");
 tick();
 setInterval(tick, POLL_MS);
 </script>
