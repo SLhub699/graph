@@ -818,12 +818,29 @@ function fmtAbs(ts){
 }
 // pace10_s/eta 是 publish_sr.py 用 val 每 10 步的 wall_time 差算出来的
 // (中位数,躲开断点续跑的排队等待),eta 是 unix 时间戳。
+// arm.trainer(可选,推送端按队列状态下发):{state, reason, jid}。不是 RUNNING 时
+// 推送端已把 eta 置空 —— 排队多久没人知道,按步进硬算出来的"预计完成"是假的。
+// arm.ckpt_step(可选):存点步数;比 TB 步数小说明后面那段是白跑的,续跑要重来。
 function paceEta(arm, curStep){
   const total = arm.epochs_total;
   if (total && curStep >= total) return {pace:"—", eta:"已完成"};
   const pace = arm.pace10_s ? dur(arm.pace10_s) : "—";
+  const st = arm.trainer && arm.trainer.state;
+  if (st && st !== "RUNNING"){
+    const why = st === "PENDING" ? `排队中${arm.trainer.reason ? " · " + arm.trainer.reason : ""}`
+              : st === "NONE" ? "不在队列" : st;
+    return {pace, eta: why};
+  }
   const eta = arm.eta ? `${dur(arm.eta - Date.now()/1000)}后 · ${fmtAbs(arm.eta)}` : "—";
   return {pace, eta};
+}
+function stepLabel(arm, step){
+  const tot = arm.epochs_total ? "/" + arm.epochs_total : "";
+  const ck = arm.ckpt_step;
+  const st = arm.trainer && arm.trainer.state;
+  if (st && st !== "RUNNING" && ck != null && ck < step)
+    return `step ${ck}${tot} <span class="meta">(存点;TB 到 ${step},续跑重来)</span>`;
+  return `step ${step}${tot}`;
 }
 
 function legend(data, armKeys){
@@ -847,7 +864,7 @@ function legend(data, armKeys){
     return `<div class="lg ${hidden.has(a)?"off":""}" data-arm="${a}">
       <span class="sw" style="background:var(${COLOR[a]})"></span>
       <span class="nm">${arm.disp || a}</span>
-      <span class="vl">step ${step}${arm.epochs_total?"/"+arm.epochs_total:""}
+      <span class="vl">${stepLabel(arm, step)}
         · train ${last===null?"—":(last*100).toFixed(1)+"%"}
         · val ${vlast===null?"—":(vlast*100).toFixed(1)+"%"}
         · score ${slast===null?"—":(slast*100).toFixed(1)+"%"}
