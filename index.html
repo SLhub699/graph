@@ -987,15 +987,17 @@ function usagePanel(data){
   // 绝不回落成 q 本身 —— 那正是要藏的东西。
   const rows = Object.entries(u.by_qos).map(([q, v], i) => `<tr>
       <td class="tl">${v.label || ("配额 " + (i+1))}<br><span class="soft">全组 ${v.n} 个作业在跑${
-        v.mine_n != null ? `,我 ${v.mine_n} 个(${v.mine_mem_g}G${v.mine_gpu ? ` · GPU ${v.mine_gpu} 张` : ""})` : ""}</span></td>
+        v.mine_n != null ? `,我 ${v.mine_n} 个(${v.mine_mem_g}G${v.mine_gpu ? ` · GPU ${v.mine_gpu} 张` : ""}${v.mine_cpu != null ? ` · CPU ${v.mine_cpu} 核` : ""})` : ""}</span></td>
       <td class="qcell">内存 ${bar(v.mem_g, v.quota_mem_g, "G")}</td>
       <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
+      <td class="qcell">CPU ${v.cpu != null ? bar(v.cpu, v.quota_cpu, " 核") : `<span class="soft">旧密文无此项</span>`}</td>
     </tr>`).join("");
   return panelBox("u", "全组资源占用",
     `统计全组作业(旧密文只含本人,此时数字偏小) ·
       采集于 ${ago(Date.now()/1000 - u.updated)} ·
       口径是<b>申请值</b>(SLURM 按申请整块划走,实际用多少都一样占配额) ·
-      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我`,
+      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我 ·
+      <b>三项任一占满都排队</b>(内存/GPU/CPU 分别对应 SLURM 的 QOSGrpMemLimit / QOSGrpGRES / QOSGrpCpuLimit;0904 四臂就是内存 GPU 都有余、CPU 155/160 卡住)`,
     () => `<table class="tasks"><tbody>${rows}</tbody></table>`);
 }
 
