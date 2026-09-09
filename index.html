@@ -925,6 +925,15 @@ function taskRow(j){
         if (pr && pr.step != null) bits.push(`${pr.step}/${pr.total} 步`);
         if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
       } else if (s === "PENDING"){
+        // 排队时人最想知道的是「什么时候才轮到我起跑」。这个数来自 SLURM 的
+        // backfill 预估,实测会大幅漂移(有过低估 2.8 倍的记录),所以按最不
+        // 可靠的那一档(weak,虚线底纹)渲染,并在 title 里写明来源。
+        if (j.sched_ts){
+          const dt = j.sched_ts - Date.now()/1000;
+          bits.push(`<span class="fin weak" title="SLURM backfill 起跑预估 —— 会大幅漂移,只能当上界看">`
+            + `预计起跑 <b>${fmtStamp2(j.sched_ts)}</b>`
+            + (dt > 0 ? ` · ${dur(dt)}后` : "") + `</span>`);
+        }
         if (j.after) bits.push(`<span class="soft">排在「${j.after}」之后</span>`);
         else if (j.reason && j.reason !== "None") bits.push(`<span class="soft">${j.reason}</span>`);
       }
