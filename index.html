@@ -167,6 +167,14 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .sync:hover{border:0;color:var(--fg2)}
 .sync.bad{color:var(--crit)}
 .sync.bad:hover{color:var(--crit)}
+.sync.warn{color:var(--crit);font-weight:600}
+.ftog{background:none;border:1px solid var(--dim);border-radius:10px;color:var(--fg2);
+  cursor:pointer;font-size:11px;padding:1px 8px;margin-left:6px;line-height:1.5}
+.ftog.on{background:var(--fg2);color:var(--bg,#fff);border-color:var(--fg2)}
+.ftog:hover{border-color:var(--fg)}
+.robar{border:1px dashed var(--crit);border-radius:6px;padding:6px 10px;margin:6px 0;
+  font-size:12px;color:var(--fg2)}
+.robar b{color:var(--crit)}
 </style>
 </head>
 <body>
@@ -282,7 +290,11 @@ const dismissed = new Set();      // ✕ 掉的作业号
 const collapsed = new Set();      // 折叠的面板键
 const hidden    = new Set();      // 隐藏的 SR 曲线(臂 key)
 const blHidden  = new Set();      // 隐藏的对垒曲线("面板序号:系列名")
-const SETS = {d: dismissed, c: collapsed, h: hidden, b: blHidden};
+// 0930 加:按**类别**隐藏终态任务("done"=已完成/已取消,"bad"=失败类)。
+// 起因:✕ 是按作业号记的,每出一个新终态作业就得在每台设备上再点一次;
+// 类别开关点一次,之后新出的同类作业自动不显示,并且同一个条目同步到所有设备。
+const filters   = new Set();
+const SETS = {d: dismissed, c: collapsed, h: hidden, b: blHidden, f: filters};
 let smooth = 0.85;
 function applyState(){
   for (const set of Object.values(SETS)) set.clear();
@@ -422,14 +434,33 @@ async function load(){
   // 界面状态同样是可选的:没推过(404)、解不开、格式怪 —— 一律退回本机那份,
   // 绝不因为同步出问题而看不到数据。读走 raw(不需要 token),所以没配 &t=
   // 的设备也能收到另一端的折叠/隐藏。
-  try {
-    const ru = await fetch(url(UI_FILE), {cache:"no-store"});
-    if (ru.ok){
-      const eu = await ru.json();
-      if (eu.iv && eu.ct) mergeState(await decrypt(eu, k));
-    }
-  } catch(e){}
+  // 0930:有 token 时改走 API 读 —— raw 有 max-age=300 的 CDN 缓存,手机上
+  // 刚点完、电脑这边最多要 5 分钟才看得到;API 无 CDN 缓存,带 token 限额
+  // 5000 次/小时,60s 一轮远用不完。API 失败(限流/网络)退回 raw。
+  let eu = await readUiViaApi(g, hashParams().t);
+  if (!eu){
+    try {
+      const ru = await fetch(url(UI_FILE), {cache:"no-store"});
+      if (ru.ok) eu = await ru.json();
+    } catch(e){}
+  }
+  try { if (eu && eu.iv && eu.ct) mergeState(await decrypt(eu, k)); } catch(e){}
   return data;
+}
+
+async function readUiViaApi(g, t){
+  if (!t) return null;
+  try {
+    const r = await fetch(`https://api.github.com/gists/${g.split("/").pop()}`, {
+      cache: "no-store",
+      headers: {"Authorization": `Bearer ${t}`,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28"}});
+    if (!r.ok) return null;
+    const f = ((await r.json()).files || {})[UI_FILE];
+    if (!f || f.truncated || !f.content) return null;
+    return JSON.parse(f.content);
+  } catch(e){ return null; }
 }
 
 /* ------------------------------------------------------------ 状态回写
@@ -477,7 +508,7 @@ function setSync(kind, msg){
                        return `${p(d.getHours())}:${p(d.getMinutes())}`; };
   const T = {
     ro:   ["只收不发", "书签里没有 &t=<token>:这台设备会收到另一端的改动,但自己的改动只留在本机。集群上跑 publish_sr.py --bookmark 取带 token 的书签。"],
-    idle: ["同步就绪", "折叠/隐藏/✕ 会自动同步到你的另一台设备"],
+    idle: ["同步就绪", "折叠/隐藏/✕/类别开关会自动同步到你的所有设备"],
     busy: ["同步中…", ""],
     ok:   [`已同步 ${hhmm()}`, "折叠/隐藏/平滑已写回 gist,另一端下次刷新就跟上"],
     bad:  ["同步失败", msg || ""]
@@ -485,6 +516,7 @@ function setSync(kind, msg){
   el.textContent = T[0];
   el.title = T[1];
   el.classList.toggle("bad", kind === "bad");
+  el.classList.toggle("warn", kind === "ro");
 }
 
 /* ------------------------------------------------------------------ 画图 */
@@ -893,6 +925,19 @@ function fmtStamp2(ts){
   const d = new Date(ts*1000), p = n => String(n).padStart(2,"0");
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+function termClass(j){
+  const s = (j.state || "UNKNOWN").split(" ")[0];
+  if (!TERM.has(s)) return "";                       // 运行/排队中的永远显示
+  return (s === "COMPLETED" || s === "CANCELLED") ? "done" : "bad";
+}
+/* 只收不发的设备要看得见:否则你在这台上点的隐藏,另一台永远收不到,
+ * 还以为同步坏了。0930 从头部一行小灰字升级成任务面板顶上的醒目提示。 */
+function roBanner(){
+  if (hashParams().t) return "";
+  return `<div class="robar"><b>这台设备只收不发。</b>书签里没有 <code>&amp;t=</code>:
+    另一台设备的折叠/隐藏会同步过来,但你在这里的操作只留在本机。
+    在集群上运行 <code>publish.py --bookmark</code>,用它打印的完整书签替换这台设备上的书签。</div>`;
+}
 function taskRow(j){
     const s = (j.state || "UNKNOWN").split(" ")[0];
     const cls = s === "RUNNING" ? "run" : s === "PENDING" ? "wait"
@@ -952,12 +997,21 @@ function tasksPanel(data){
   if (!t || !t.jobs || !t.jobs.length) return "";
   // 推送端已按提交时间倒序;这里再排一遍,兼容没有 submit 字段的旧密文
   const all = t.jobs.slice().sort((a,b) => (b.submit||0) - (a.submit||0));
-  const jobs = all.filter(j => !dismissed.has(String(j.id)));
-  const nx = all.length - jobs.length;
+  const kept = all.filter(j => !dismissed.has(String(j.id)));
+  const nx = all.length - kept.length;
+  // 类别过滤在 ✕ 之后:两者正交,恢复其一不会误放出另一类
+  const jobs = kept.filter(j => { const c = termClass(j); return !(c && filters.has(c)); });
+  const nDone = kept.filter(j => termClass(j) === "done").length;
+  const nBad  = kept.filter(j => termClass(j) === "bad").length;
   // 分类由密文的 cat 字段下发(gpu=申请了 GPU 的训练任务,svc=看门狗/服务);
   // 旧密文没有 cat 时按 kind 兜底。两栏各自可折叠。
   const cat = j => j.cat || (j.kind === "service" ? "svc" : "gpu");
-  let body = "";
+  let body = roBanner()
+    + `<div class="tsec"><span>显示</span>`
+    + `<button class="ftog${filters.has("done") ? " on" : ""}" data-f="done" title="点一次:所有已完成/已取消的任务(包括以后出现的)都不显示;同步到你的所有设备">`
+    + `${filters.has("done") ? "已隐藏" : "隐藏"}已完成/取消 ${nDone}</button>`
+    + `<button class="ftog${filters.has("bad") ? " on" : ""}" data-f="bad" title="点一次:所有失败/超时/内存超限/节点故障的任务都不显示;同步到你的所有设备">`
+    + `${filters.has("bad") ? "已隐藏" : "隐藏"}失败 ${nBad}</button></div>`;
   for (const [ck, cl] of [["gpu", "GPU 训练"], ["svc", "看门狗 / 常驻服务(无 GPU)"]]){
     const rows = jobs.filter(j => cat(j) === ck);
     if (!rows.length) continue;
@@ -969,6 +1023,11 @@ function tasksPanel(data){
   const foot = [];
   if (nx) foot.push(`你已 ✕ 隐藏 ${nx} 项(<a href="#" id="undismiss">全部恢复</a>)`);
   if (t.hidden) foot.push(`更早的 ${t.hidden} 项终态作业未下发`);
+  const fh = [...filters].filter(c => c === "done" || c === "bad").length;
+  if (fh) foot.push(`类别开关隐藏了 ${all.length - nx - jobs.length} 项`);
+  const dr = data.dropped_arms || [];
+  if (dr.length) foot.push(`${dr.length} 条曲线因对应作业失败(代码问题)已由推送端撤下:`
+    + dr.map(d => `${d.disp || d.tag}(${STATE_ZH[d.state] || d.state})`).join("、"));
   if (foot.length) body += `<p class="sub" style="margin:8px 0 2px">${foot.join(" · ")}</p>`;
   return panelBox("t", "任务进度",
     `SLURM 实时状态 · 近 14 天提交的作业自动收录 · 采集于 ${ago(Date.now()/1000 - t.updated)}`,
@@ -1082,6 +1141,13 @@ function render(data){
       commit(); render(latest);
     };
   });
+  root.querySelectorAll(".ftog").forEach(el=>{
+    el.onclick = () => {
+      const c = el.dataset.f;
+      flag("f", c, !filters.has(c));
+      commit(); render(latest);
+    };
+  });
   const ud = root.querySelector("#undismiss");
   if (ud) ud.onclick = ev => {
     ev.preventDefault();
@@ -1127,6 +1193,15 @@ $("#refresh").onclick = tick;
 // 点指示器 = 立刻收一次 + 立刻发一次(不等 60s 轮询,也不等 1.2s 防抖)
 $("#sync").onclick = () => { tick(); clearTimeout(pushT); pushState(); };
 addEventListener("hashchange", tick);
+/* 切回前台立刻收一次(手机切 app 回来不必等 60s 轮询),离开前把没推完的
+ * 改动立刻推掉(防抖窗口里切走的话,那 1.2s 内的操作会拖到下次才发)。 */
+let lastVis = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible"){
+    if (Date.now() - lastVis > 3000){ lastVis = Date.now(); tick(); }
+  } else if (pushT){ clearTimeout(pushT); pushT = null; pushState(); }
+});
+addEventListener("pageshow", ev => { if (ev.persisted) tick(); });   // iOS 返回缓存页
 setSync(hashParams().t ? "idle" : "ro");
 tick();
 setInterval(tick, POLL_MS);
