@@ -172,9 +172,6 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
   cursor:pointer;font-size:11px;padding:1px 8px;margin-left:6px;line-height:1.5}
 .ftog.on{background:var(--fg2);color:var(--bg,#fff);border-color:var(--fg2)}
 .ftog:hover{border-color:var(--fg)}
-.robar{border:1px dashed var(--crit);border-radius:6px;padding:6px 10px;margin:6px 0;
-  font-size:12px;color:var(--fg2)}
-.robar b{color:var(--crit)}
 </style>
 </head>
 <body>
@@ -507,7 +504,7 @@ function setSync(kind, msg){
   const hhmm = () => { const d = new Date(), p = n => String(n).padStart(2,"0");
                        return `${p(d.getHours())}:${p(d.getMinutes())}`; };
   const T = {
-    ro:   ["只收不发", "书签里没有 &t=<token>:这台设备会收到另一端的改动,但自己的改动只留在本机。集群上跑 publish_sr.py --bookmark 取带 token 的书签。"],
+    ro:   ["", ""],          // 只收不发:2026-09-30 起不再提示(用户知道,不想每次看到)
     idle: ["同步就绪", "折叠/隐藏/✕/类别开关会自动同步到你的所有设备"],
     busy: ["同步中…", ""],
     ok:   [`已同步 ${hhmm()}`, "折叠/隐藏/平滑已写回 gist,另一端下次刷新就跟上"],
@@ -516,7 +513,6 @@ function setSync(kind, msg){
   el.textContent = T[0];
   el.title = T[1];
   el.classList.toggle("bad", kind === "bad");
-  el.classList.toggle("warn", kind === "ro");
 }
 
 /* ------------------------------------------------------------------ 画图 */
@@ -930,14 +926,6 @@ function termClass(j){
   if (!TERM.has(s)) return "";                       // 运行/排队中的永远显示
   return (s === "COMPLETED" || s === "CANCELLED") ? "done" : "bad";
 }
-/* 只收不发的设备要看得见:否则你在这台上点的隐藏,另一台永远收不到,
- * 还以为同步坏了。0930 从头部一行小灰字升级成任务面板顶上的醒目提示。 */
-function roBanner(){
-  if (hashParams().t) return "";
-  return `<div class="robar"><b>这台设备只收不发。</b>书签里没有 <code>&amp;t=</code>:
-    另一台设备的折叠/隐藏会同步过来,但你在这里的操作只留在本机。
-    在集群上运行 <code>publish.py --bookmark</code>,用它打印的完整书签替换这台设备上的书签。</div>`;
-}
 function taskRow(j){
     const s = (j.state || "UNKNOWN").split(" ")[0];
     const cls = s === "RUNNING" ? "run" : s === "PENDING" ? "wait"
@@ -951,6 +939,7 @@ function taskRow(j){
       step:  ["按实测步进节奏",   "best"],
       hist:  ["按同类作业实测时长", "ok"],
       chain: ["前序完成 + 本任务时长", "ok"],
+      log:   ["按日志里当前阶段的实测节奏(之后若还有阶段会更晚)", "ok"],
       queue: ["SLURM 起跑预估 + 时长(预估会大幅漂移)", "weak"],
     };
     const bits = [];
@@ -967,7 +956,8 @@ function taskRow(j){
       }
       if (s === "RUNNING"){
         const pr = j.progress;
-        if (pr && pr.step != null) bits.push(`${pr.step}/${pr.total} 步`);
+        if (pr && pr.step != null)
+          bits.push(pr.src === "log" ? `${pr.stage || "进度"} ${pr.step}/${pr.total}` : `${pr.step}/${pr.total} 步`);
         if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
       } else if (s === "PENDING"){
         // 排队时人最想知道的是「什么时候才轮到我起跑」。这个数来自 SLURM 的
@@ -982,6 +972,12 @@ function taskRow(j){
         if (j.after) bits.push(`<span class="soft">排在「${j.after}」之后</span>`);
         else if (j.reason && j.reason !== "None") bits.push(`<span class="soft">${j.reason}</span>`);
       }
+    }
+    // 研究循环那一行:下一轮结论的预计时刻(= 它等的实验预计完成 + 约 1 小时),按浏览器本地时区显示
+    if (j.next_ts){
+      const dn = j.next_ts - Date.now()/1000;
+      bits.push(`<span class="fin ok" title="实验预计完成 + 约 1 小时(轮询 ≤10 分钟、nemotron 评审约 20 分钟、Claude 分析 10-30 分钟)">`
+        + `下一轮结论预计 <b>${fmtStamp2(j.next_ts)}</b>` + (dn > 0 ? ` · ${dur(dn)}后` : "") + `</span>`);
     }
     if (j.note) bits.push(`<span class="soft">${j.note}</span>`);
     // ✕ 只给终态行;点掉的作业号记进 localStorage,永久不再显示(可整体恢复)
@@ -1006,8 +1002,7 @@ function tasksPanel(data){
   // 分类由密文的 cat 字段下发(gpu=申请了 GPU 的训练任务,svc=看门狗/服务);
   // 旧密文没有 cat 时按 kind 兜底。两栏各自可折叠。
   const cat = j => j.cat || (j.kind === "service" ? "svc" : "gpu");
-  let body = roBanner()
-    + `<div class="tsec"><span>显示</span>`
+  let body = `<div class="tsec"><span>显示</span>`
     + `<button class="ftog${filters.has("done") ? " on" : ""}" data-f="done" title="点一次:所有已完成/已取消的任务(包括以后出现的)都不显示;同步到你的所有设备">`
     + `${filters.has("done") ? "已隐藏" : "隐藏"}已完成/取消 ${nDone}</button>`
     + `<button class="ftog${filters.has("bad") ? " on" : ""}" data-f="bad" title="点一次:所有失败/超时/内存超限/节点故障的任务都不显示;同步到你的所有设备">`
