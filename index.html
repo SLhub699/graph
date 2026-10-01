@@ -940,6 +940,7 @@ function taskRow(j){
       hist:  ["按同类作业实测时长", "ok"],
       chain: ["前序完成 + 本任务时长", "ok"],
       log:   ["按日志里当前阶段的实测节奏(之后若还有阶段会更晚)", "ok"],
+      log_stage: ["只算当前阶段:之后还有阶段,作业完成会明显更晚", "weak"],
       queue: ["SLURM 起跑预估 + 时长(预估会大幅漂移)", "weak"],
     };
     const bits = [];
@@ -950,14 +951,14 @@ function taskRow(j){
       if (j.finish){
         const [why, lvl] = SRC[j.finish_src] || ["", "ok"];
         const left = j.finish - Date.now()/1000;
-        bits.push(`<span class="fin ${lvl}" title="${why}">预计完成 `
+        bits.push(`<span class="fin ${lvl}" title="${why}">${j.finish_src === "log_stage" ? "本阶段预计结束" : "预计完成"} `
           + `<b>${fmtStamp2(j.finish)}</b>`
           + (left > 0 ? ` · ${dur(left)}后` : "") + `</span>`);
       }
       if (s === "RUNNING"){
         const pr = j.progress;
         if (pr && pr.step != null)
-          bits.push(pr.src === "log" ? `${pr.stage || "进度"} ${pr.step}/${pr.total}` : `${pr.step}/${pr.total} 步`);
+          bits.push((pr.src === "log" || pr.src === "log_stage") ? `${pr.stage || "进度"} ${pr.step}/${pr.total}` : `${pr.step}/${pr.total} 步`);
         if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
       } else if (s === "PENDING"){
         // 排队时人最想知道的是「什么时候才轮到我起跑」。这个数来自 SLURM 的
