@@ -172,6 +172,20 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
   cursor:pointer;font-size:11px;padding:1px 8px;margin-left:6px;line-height:1.5}
 .ftog.on{background:var(--fg2);color:var(--bg,#fff);border-color:var(--fg2)}
 .ftog:hover{border-color:var(--fg)}
+/* 研究进展面板(2026-10-03):内容全部来自密文里的 research 字段(研究循环的 latest.owner_view),
+ * 本文件只负责排版 —— 公开仓库里没有任何研究内容。正文是极简 markdown:段落、"- " 列表、**粗体**、`代码`。 */
+.rmd{font-size:13px;line-height:1.75;color:var(--fg);margin:2px 0 12px 25px;overflow-wrap:anywhere}
+.rmd p{margin:6px 0}
+.rmd ul{margin:4px 0;padding-left:18px}
+.rmd li{margin:3px 0}
+.rmd b{font-weight:600}
+.rmd code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:11.5px;
+  word-break:break-all}
+.rmd a{color:var(--grpo)}
+.rmd .small{font-size:11px}
+.panel.rs .sub{font-family:inherit;font-size:12px}
+.panel.rs .tsec{font-size:13px;color:var(--fg);margin-top:14px}
+@media (max-width:640px){ .rmd{margin-left:4px} }
 </style>
 </head>
 <body>
@@ -902,6 +916,49 @@ function legend(data, armKeys){
   }).join("") + `</div>`;
 }
 
+/* ------------------------------------------------------------- 研究进展 */
+// 密文里的文字一律先转义再排版:研究循环的文字由模型写成,不能当 HTML 直接塞进页面。
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
+}
+function mdInline(t){
+  return t.replace(/`([^`]+)`/g, (m, x) => `<code>${x}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, (m, x) => `<b>${x}</b>`)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (m, x, u) => `<a href="${u}" target="_blank" rel="noopener">${x}</a>`)
+    .replace(/&lt;sub&gt;(.*?)&lt;\/sub&gt;/g, (m, x) => `<span class="soft small">${x}</span>`);
+}
+// 极简 markdown:空行分块;以 "- " 开头的块是列表(续行并进上一条),其余是段落(行内换行保留)
+function mdLite(md){
+  return esc(md).split(/\n\s*\n/).map(b => {
+    const lines = b.split("\n").filter(l => l.trim());
+    if (!lines.length) return "";
+    if (lines[0].startsWith("- ")){
+      const items = [];
+      for (const l of lines){
+        if (l.startsWith("- ")) items.push(l.slice(2));
+        else items[items.length - 1] += "<br>" + l.trim();
+      }
+      return `<ul>${items.map(x => `<li>${mdInline(x)}</li>`).join("")}</ul>`;
+    }
+    return `<p>${lines.map(mdInline).join("<br>")}</p>`;
+  }).join("");
+}
+const RS_LEVEL = {run:["run", "进行中"], wait:["wait", "等待中"], bad:["bad", "需要注意"], done:["done", "已停止"]};
+function researchPanel(data){
+  const r = data.research;
+  if (!r || !Array.isArray(r.sections) || !r.sections.length) return "";
+  const [cls, txt] = RS_LEVEL[r.level] || ["wait", "未知"];
+  const body = r.sections.map(s => {
+    const k = "r:" + (s.key || "");
+    return `<div class="tsec">${cbtn(k)}<span>${esc(s.title)}</span></div>`
+      + (isClosed(k) ? "" : `<div class="rmd">${mdLite(s.md || "")}</div>`);
+  }).join("");
+  const sub = `<span class="st ${cls}">${txt}</span> ${esc(r.headline || "")} · `
+    + `采集于 ${ago(Date.now()/1000 - (r.updated || data.updated))}`;
+  return panelBox("r", "研究进展", sub, () => body).replace('<div class="panel', '<div class="panel rs');
+}
+
 /* ------------------------------------------------------------- 任务进度 */
 // 纯数据驱动:标签/状态全部来自解密后的 payload,本文件不含任何任务内容。
 const STATE_ZH = {RUNNING:"运行中", PENDING:"排队", COMPLETED:"已完成",
@@ -970,8 +1027,8 @@ function taskRow(j){
             + `预计起跑 <b>${fmtStamp2(j.sched_ts)}</b>`
             + (dt > 0 ? ` · ${dur(dt)}后` : "") + `</span>`);
         }
-        if (j.after) bits.push(`<span class="soft">排在「${j.after}」之后</span>`);
-        else if (j.reason && j.reason !== "None") bits.push(`<span class="soft">${j.reason}</span>`);
+        if (j.after) bits.push(`<span class="soft">排在「${esc(j.after)}」之后</span>`);
+        else if (j.reason && j.reason !== "None") bits.push(`<span class="soft">${esc(j.reason)}</span>`);
       }
     }
     // 研究循环那一行:下一轮结论的预计时刻(= 它等的实验预计完成 + 约 1 小时),按浏览器本地时区显示
@@ -980,11 +1037,11 @@ function taskRow(j){
       bits.push(`<span class="fin ok" title="实验预计完成 + 约 1 小时(轮询 ≤10 分钟、nemotron 评审约 20 分钟、Claude 分析 10-30 分钟)">`
         + `下一轮结论预计 <b>${fmtStamp2(j.next_ts)}</b>` + (dn > 0 ? ` · ${dur(dn)}后` : "") + `</span>`);
     }
-    if (j.note) bits.push(`<span class="soft">${j.note}</span>`);
+    if (j.note) bits.push(`<span class="soft">${esc(j.note)}</span>`);
     // ✕ 只给终态行;点掉的作业号记进 localStorage,永久不再显示(可整体恢复)
     const x = TERM.has(s)
       ? `<button class="xbtn" data-x="${j.id}" title="从看板永久隐藏(面板底部可恢复)">✕</button>` : "";
-    return `<tr><td class="tl">${j.label || j.id}</td>
+    return `<tr><td class="tl">${esc(j.label || j.id)}</td>
       <td><span class="st ${cls}">${STATE_ZH[s] || s}</span></td>
       <td class="tx">${bits.join(" · ")}</td><td class="xc">${x}</td></tr>`;
 }
@@ -1097,7 +1154,7 @@ function render(data){
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
   chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
   blMetas = [];
-  root.innerHTML = usagePanel(data) + tasksPanel(data)
+  root.innerHTML = researchPanel(data) + usagePanel(data) + tasksPanel(data)
     + GROUPS.map(g => groupPanels(data, g)).join("")
     + blPanels(data._bl);
 
