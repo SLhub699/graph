@@ -519,7 +519,7 @@ function setSync(kind, msg){
                        return `${p(d.getHours())}:${p(d.getMinutes())}`; };
   const T = {
     ro:   ["", ""],          // 只收不发:2026-09-30 起不再提示(用户知道,不想每次看到)
-    idle: ["同步就绪", "折叠/隐藏/✕/类别开关会自动同步到你的所有设备"],
+    idle: ["", ""],          // 就绪也不提示(2026-10-20:用户知道);只有同步中 / 已同步 / 失败才显示
     busy: ["同步中…", ""],
     ok:   [`已同步 ${hhmm()}`, "折叠/隐藏/平滑已写回 gist,另一端下次刷新就跟上"],
     bad:  ["同步失败", msg || ""]
@@ -1008,7 +1008,6 @@ function taskRow(j){
     };
     const bits = [];
     if (j.kind === "service"){
-      bits.push(`<span class="soft">常驻服务 · 跑到活干完为止</span>`);
       if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
     } else {
       if (j.finish){
@@ -1081,16 +1080,13 @@ function tasksPanel(data){
   }
   const foot = [];
   if (nx) foot.push(`你已 ✕ 隐藏 ${nx} 项(<a href="#" id="undismiss">全部恢复</a>)`);
-  if (t.hidden) foot.push(`更早的 ${t.hidden} 项终态作业未下发`);
   const fh = [...filters].filter(c => c === "done" || c === "bad").length;
   if (fh) foot.push(`类别开关隐藏了 ${all.length - nx - jobs.length} 项`);
   const dr = data.dropped_arms || [];
   if (dr.length) foot.push(`${dr.length} 条曲线因对应作业失败(代码问题)已由推送端撤下:`
     + dr.map(d => `${d.disp || d.tag}(${STATE_ZH[d.state] || d.state})`).join("、"));
   if (foot.length) body += `<p class="sub" style="margin:8px 0 2px">${foot.join(" · ")}</p>`;
-  return panelBox("t", "任务进度",
-    `SLURM 实时状态 · 近 14 天提交的作业自动收录 · 采集于 ${ago(Date.now()/1000 - t.updated)}`,
-    () => body);
+  return panelBox("t", "任务进度", `采集于 ${ago(Date.now()/1000 - t.updated)}`, () => body);
 }
 
 /* ------------------------------------------------------------- 资源占用 */
@@ -1099,7 +1095,7 @@ function tasksPanel(data){
 // 本人的份额由密文里的 mine_* 字段下发,在作业数下面单列一行小字;
 // 旧密文没有这些字段,渲染时要判空。
 function bar(used, quota, unit){
-  if (!quota) return `<span class="soft">${used}${unit}(该 QOS 无此配额)</span>`;
+  if (!quota) return `<span class="soft">—</span>`;
   const pct = Math.min(100, used / quota * 100);
   const lvl = pct >= 85 ? "bad" : pct >= 60 ? "wait" : "run";
   return `<span class="qnum">${used}${unit} <span class="soft">/ ${quota}${unit}</span></span>
@@ -1119,12 +1115,8 @@ function usagePanel(data){
       <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
       <td class="qcell">CPU ${v.cpu != null ? bar(v.cpu, v.quota_cpu, " 核") : `<span class="soft">旧密文无此项</span>`}</td>
     </tr>`).join("");
-  return panelBox("u", "全组资源占用",
-    `统计全组作业(旧密文只含本人,此时数字偏小) ·
-      采集于 ${ago(Date.now()/1000 - u.updated)} ·
-      口径是<b>申请值</b>(SLURM 按申请整块划走,实际用多少都一样占配额) ·
-      百分比高 = 额度被占满,新作业要排队 —— 不管占的人是不是我 ·
-      <b>三项任一占满都排队</b>(内存/GPU/CPU 分别对应 SLURM 的 QOSGrpMemLimit / QOSGrpGRES / QOSGrpCpuLimit;0904 四臂就是内存 GPU 都有余、CPU 155/160 卡住)`,
+  // 口径说明(申请值、全组、三项任一占满都排队)用户早就知道,2026-10-20 起副标题只留采集时间
+  return panelBox("u", "全组资源占用", `采集于 ${ago(Date.now()/1000 - u.updated)}`,
     () => `<table class="tasks"><tbody>${rows}</tbody></table>`);
 }
 
