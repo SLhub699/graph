@@ -945,18 +945,24 @@ function mdLite(md){
   }).join("");
 }
 const RS_LEVEL = {run:["run", "进行中"], wait:["wait", "等待中"], bad:["bad", "需要注意"], done:["done", "已停止"]};
+// 多个研究循环(2026-10-19:project-1.4 两个 idea 同时验证,各一个循环):research_tracks 每项一块面板,
+// 折叠键 r0 / r0:<节>;没有 research_tracks 时照旧只画 research(折叠键 r / r:<节>)。
 function researchPanel(data){
-  const r = data.research;
+  const ts = Array.isArray(data.research_tracks) ? data.research_tracks : [];
+  if (ts.length) return ts.map((r, i) => researchBox(data, r, "r" + i, "研究进展 · " + esc(r.track || String(i + 1)))).join("");
+  return researchBox(data, data.research, "r", "研究进展");
+}
+function researchBox(data, r, key, title){
   if (!r || !Array.isArray(r.sections) || !r.sections.length) return "";
   const [cls, txt] = RS_LEVEL[r.level] || ["wait", "未知"];
   const body = r.sections.map(s => {
-    const k = "r:" + (s.key || "");
+    const k = key + ":" + (s.key || "");
     return `<div class="tsec">${cbtn(k)}<span>${esc(s.title)}</span></div>`
       + (isClosed(k) ? "" : `<div class="rmd">${mdLite(s.md || "")}</div>`);
   }).join("");
   const sub = `<span class="st ${cls}">${txt}</span> ${esc(r.headline || "")} · `
     + `采集于 ${ago(Date.now()/1000 - (r.updated || data.updated))}`;
-  return panelBox("r", "研究进展", sub, () => body).replace('<div class="panel', '<div class="panel rs');
+  return panelBox(key, title, sub, () => body).replace('<div class="panel', '<div class="panel rs');
 }
 
 /* ------------------------------------------------------------- 任务进度 */
