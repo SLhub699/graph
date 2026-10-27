@@ -1005,7 +1005,10 @@ function taskRow(j){
       log:   ["按日志里当前阶段的实测节奏(之后若还有阶段会更晚)", "ok"],
       log_stage: ["只算当前阶段:之后还有阶段,作业完成会明显更晚", "weak"],
       queue: ["SLURM 起跑预估 + 时长(预估会大幅漂移)", "weak"],
+      limit: ["没有进度信息,也没有同类作业的实测时长:这是作业时限到点的时刻,只是上限", "weak"],
+      queue_limit: ["SLURM 起跑预估 + 作业时限:只是上限,起跑预估还会漂移", "weak"],
     };
+    const FIN_WORD = {log_stage: "本阶段预计结束", limit: "最晚完成", queue_limit: "最晚完成"};
     const bits = [];
     if (j.kind === "service"){
       if (j.elapsed && j.elapsed !== "00:00:00") bits.push(`已跑 ${j.elapsed}`);
@@ -1013,7 +1016,7 @@ function taskRow(j){
       if (j.finish){
         const [why, lvl] = SRC[j.finish_src] || ["", "ok"];
         const left = j.finish - Date.now()/1000;
-        bits.push(`<span class="fin ${lvl}" title="${why}">${j.finish_src === "log_stage" ? "本阶段预计结束" : "预计完成"} `
+        bits.push(`<span class="fin ${lvl}" title="${why}">${FIN_WORD[j.finish_src] || "预计完成"} `
           + `<b>${fmtStamp2(j.finish)}</b>`
           + (left > 0 ? ` · ${dur(left)}后` : "") + `</span>`);
       }
