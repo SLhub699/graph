@@ -186,6 +186,55 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .panel.rs .sub{font-family:inherit;font-size:12px}
 .panel.rs .tsec{font-size:13px;color:var(--fg);margin-top:14px}
 @media (max-width:640px){ .rmd{margin-left:4px} }
+/* 结果表(2026-11-05):内容全部来自密文里的 tables 字段(课题写的 JSON 表),本文件只管排版,字符串一律转义。
+ * 横向滚动只发生在表格容器里(页面本身不横滚);容器同时限高,表头两行和第一列在容器里吸附。 */
+.panel.tbp .sub{font-family:inherit;font-size:12px}
+.rtv{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
+.rtv button{border-radius:99px;padding:2px 11px;font-size:12px;color:var(--fg2)}
+.rtv button.on{background:var(--fg2);color:var(--bg);border-color:var(--fg2)}
+.rtw{overflow:auto;max-height:80vh;border:1px solid var(--line);border-radius:8px;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.rt{border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums;min-width:100%}
+.rt th,.rt td{padding:5px 9px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--panel)}
+.rt thead th{position:sticky;top:0;z-index:2;color:var(--fg2);font-weight:600;text-align:center}
+.rt thead tr.h1 th{height:28px}
+.rt thead tr.h2 th{top:28px;font-weight:500;text-align:right}
+.rt thead th small{display:block;font-size:10px;font-weight:400;color:var(--dim)}
+.rt th.rl0{left:0;z-index:4;text-align:left;vertical-align:bottom}
+.rt tbody th.rl{position:sticky;left:0;z-index:1;text-align:left;font-weight:500;color:var(--fg);
+  white-space:normal;min-width:150px;max-width:240px;line-height:1.35}
+.rt tbody th.rl small{display:block;font-size:10.5px;font-weight:400;color:var(--dim)}
+.rt tr.rg th,.rt tr.rg td{background:color-mix(in srgb,var(--fg2) 7%,var(--panel));color:var(--fg2);
+  font-size:11px;font-weight:600;letter-spacing:.02em;text-align:left;padding-top:6px;padding-bottom:6px}
+.rt tr.rg th{position:sticky;left:0;z-index:1}
+.rt td{text-align:right;vertical-align:top;line-height:1.35}
+.rt .g0{border-left:1px solid var(--line)}
+.rt td .v{display:block;color:var(--fg);font-weight:500}
+.rt td .sb{display:block;font-size:10.5px;color:var(--dim)}
+.rt td .tag{display:inline-block;font-size:9.5px;line-height:1.3;border:1px solid var(--line);border-radius:4px;
+  padding:0 3px;margin-left:4px;color:var(--fg2);font-weight:400;vertical-align:1px}
+.rt td.s-running{background:color-mix(in srgb,var(--run) 10%,var(--panel))}
+.rt td.s-running .v{color:var(--run)}
+.rt td.s-queued{background:color-mix(in srgb,var(--wait) 9%,var(--panel))}
+.rt td.s-queued .v{color:var(--wait)}
+.rt td.s-planned .v{color:var(--dim);font-weight:400}
+.rt td.s-na .v{color:var(--axis);font-weight:400}
+.rt td.s-failed{background:color-mix(in srgb,var(--bad) 10%,var(--panel))}
+.rt td.s-failed .v{color:var(--bad)}
+.rt td.best .v{font-weight:700;text-decoration:underline;text-decoration-color:var(--grpo);
+  text-decoration-thickness:2px;text-underline-offset:3px}
+.rtl{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:11px;color:var(--fg2);margin:8px 0 2px}
+.rtl i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;
+  border:1px solid var(--line)}
+.rtl i.s-done{background:var(--panel)} .rtl i.s-planned{background:var(--panel);border-style:dashed}
+.rtl i.s-running{background:color-mix(in srgb,var(--run) 45%,var(--panel))}
+.rtl i.s-queued{background:color-mix(in srgb,var(--wait) 45%,var(--panel))}
+.rtl i.s-failed{background:color-mix(in srgb,var(--bad) 45%,var(--panel))}
+.rtl i.s-na{background:repeating-linear-gradient(135deg,var(--line) 0 2px,var(--panel) 2px 5px)}
+@media (max-width:640px){
+  .rt th,.rt td{padding:4px 6px}
+  .rt tbody th.rl{min-width:108px;max-width:140px}
+}
 </style>
 </head>
 <body>
@@ -307,13 +356,20 @@ const blHidden  = new Set();      // 隐藏的对垒曲线("面板序号:系列�
 const filters   = new Set();
 const SETS = {d: dismissed, c: collapsed, h: hidden, b: blHidden, f: filters};
 let smooth = 0.85;
+// 2026-11-05:结果表选中的视图(如按组合切换),键 "tv:<表 key 的 URI 编码>",值 = 视图 key;同样跨设备同步
+const tview = {};
 function applyState(){
   for (const set of Object.values(SETS)) set.clear();
   smooth = 0.85;
+  for (const k of Object.keys(tview)) delete tview[k];
   for (const [key, e] of Object.entries(ST.items)){
     if (!e || !e.v) continue;                       // 墓碑
     const i = key.indexOf("|");                     // 成员名里可能有 "|",只切第一个
-    if (i < 0){ if (key === "smooth") smooth = e.v; continue; }
+    if (i < 0){
+      if (key === "smooth") smooth = e.v;
+      else if (key.startsWith("tv:")) tview[key.slice(3)] = String(e.v);
+      continue;
+    }
     const set = SETS[key.slice(0, i)];
     if (set) set.add(key.slice(i + 1));
   }
@@ -478,7 +534,7 @@ async function readUiViaApi(g, t){
  * 写要 token:gist 的 PATCH 走 api.github.com,而 fragment 里的 &t= 和 &k=
  * 一样不会随请求发给 Pages。PATCH 的 files 只写 UI_FILE 这一个文件名 ——
  * 和推送端只写 sw_sr.json 是同一个约定,两边互不覆盖。 */
-let pushT = null, pushing = false, pushMore = false, lastPushed = "";
+let pushT = null, pushing = false, pushMore = false, lastPushed = "", tokenDead = false;
 function schedulePush(){
   clearTimeout(pushT);
   // 防抖 1.2s:平滑滑块拖一次能触发几十个 oninput,不能一个一个 PATCH
@@ -488,6 +544,7 @@ async function pushState(){
   const {g, k, t} = hashParams();
   if (!g || !k) return;
   if (!t){ setSync("ro"); return; }
+  if (tokenDead){ setSync("auth"); return; }
   if (pushing){ pushMore = true; return; }
   pushing = true; setSync("busy");
   try {
@@ -501,11 +558,19 @@ async function pushState(){
                 "Content-Type": "application/json"},
       body: JSON.stringify({files: {[UI_FILE]: {content: JSON.stringify(env)}}})
     });
-    if (!r.ok) throw new Error(`gist 写回 ${r.status}`);
+    if (!r.ok){
+      const err = new Error(`gist 写回 ${r.status}`);
+      // 403 也可能是限流(带 Retry-After 或剩余额度 0):那不是令牌的问题,下一轮照常重试
+      err.status = (r.status === 403 && (r.headers.get("retry-after") || r.headers.get("x-ratelimit-remaining") === "0"))
+        ? 429 : r.status;
+      throw err;
+    }
     lastPushed = snap;
     setSync("ok");
   } catch(e){
-    setSync("bad", e.message || String(e));
+    // 401/403 = 书签里 t= 的令牌被 GitHub 拒绝(过期 / 撤销 / 没有 gist 权限):重试没用,本页不再推,换书签(hashchange)才重试
+    if (e.status === 401 || e.status === 403){ tokenDead = true; setSync("auth", e.message); }
+    else setSync("bad", e.message || String(e));
   }
   pushing = false;
   if (pushMore){ pushMore = false; schedulePush(); }
@@ -522,11 +587,12 @@ function setSync(kind, msg){
     idle: ["", ""],          // 就绪也不提示(2026-10-20:用户知道);只有同步中 / 已同步 / 失败才显示
     busy: ["同步中…", ""],
     ok:   [`已同步 ${hhmm()}`, "折叠/隐藏/平滑已写回 gist,另一端下次刷新就跟上"],
-    bad:  ["同步失败", msg || ""]
+    bad:  ["同步失败", msg || ""],
+    auth: ["同步令牌失效", (msg ? msg + ":" : "") + "书签 t= 的令牌被 GitHub 拒绝,换新令牌和书签后恢复"]
   }[kind] || ["", ""];
   el.textContent = T[0];
   el.title = T[1];
-  el.classList.toggle("bad", kind === "bad");
+  el.classList.toggle("bad", kind === "bad" || kind === "auth");
 }
 
 /* ------------------------------------------------------------------ 画图 */
@@ -954,15 +1020,86 @@ function researchPanel(data){
 }
 function researchBox(data, r, key, title){
   if (!r || !Array.isArray(r.sections) || !r.sections.length) return "";
-  const [cls, txt] = RS_LEVEL[r.level] || ["wait", "未知"];
+  // 状态标签和 headline 只给研究循环;手动轨道(2026-11-05)两者都是空的,副标题只剩采集时间
+  const lv = RS_LEVEL[r.level];
   const body = r.sections.map(s => {
     const k = key + ":" + (s.key || "");
     return `<div class="tsec">${cbtn(k)}<span>${esc(s.title)}</span></div>`
       + (isClosed(k) ? "" : `<div class="rmd">${mdLite(s.md || "")}</div>`);
   }).join("");
-  const sub = `<span class="st ${cls}">${txt}</span> ${esc(r.headline || "")} · `
+  const sub = (lv ? `<span class="st ${lv[0]}">${lv[1]}</span> ` : "") + (r.headline ? `${esc(r.headline)} · ` : "")
     + `采集于 ${ago(Date.now()/1000 - (r.updated || data.updated))}`;
   return panelBox(key, title, sub, () => body).replace('<div class="panel', '<div class="panel rs');
+}
+
+/* ------------------------------------------------------------- 结果表(2026-11-05)
+ * 数据 = 密文里的 tables:课题按 talos.table/1 写的 JSON 表(格式见 publish.py 的 clean_table),推送端每轮重读。
+ * 所有字符串(标题、行列名、注、格子里的值/小字/标签/悬浮说明、视图名)一律先 esc 再拼 —— 表格内容是数据,不是 HTML。
+ * views(可选):同一张表的几套格子(例如按组合),上方一排按钮切换,选中的视图跟折叠一样跨设备同步。 */
+const RT_ORDER = ["done", "running", "queued", "planned", "na", "failed"];
+const RT_ZH = {done:"完成", running:"运行中", queued:"排队", planned:"计划", na:"不适用", failed:"失败"};
+const RT_SHOW = {running:"运行中", queued:"排队", planned:"计划", na:"—", failed:"失败"};   // 格子没给 value 时显示
+function rtKey(t, i){ return encodeURIComponent(String((t && t.key) || i)); }
+function rtView(t, i){
+  const vs = Array.isArray(t.views) ? t.views.filter(v => v && typeof v === "object" && v.key != null) : [];
+  if (!vs.length) return {views: [], cur: null};
+  const want = tview[rtKey(t, i)];
+  return {views: vs, cur: vs.find(v => String(v.key) === want) || vs[0]};
+}
+function rtCell(c, g0){
+  const gc = g0 ? " g0" : "";
+  if (!c || typeof c !== "object") return `<td class="s-none${gc}"></td>`;
+  const st = RT_ZH[c.state] ? c.state : "planned";
+  const val = (c.value === undefined || c.value === null || c.value === "") ? (RT_SHOW[st] || "") : String(c.value);
+  return `<td class="s-${st}${c.best ? " best" : ""}${gc}"${c.title ? ` title="${esc(c.title)}"` : ""}>`
+    + `<span class="v">${esc(val)}${c.tag ? `<span class="tag">${esc(c.tag)}</span>` : ""}</span>`
+    + (c.sub ? `<span class="sb">${esc(c.sub)}</span>` : "") + `</td>`;
+}
+function rtTable(t, i){
+  const {views, cur} = rtView(t, i);
+  const pick = f => (cur && Array.isArray(cur[f])) ? cur[f] : (Array.isArray(t[f]) ? t[f] : []);
+  const groups = pick("column_groups").filter(g => g && Array.isArray(g.columns) && g.columns.length);
+  const rgs = pick("row_groups").filter(g => g && Array.isArray(g.rows) && g.rows.length);
+  const cells = (cur ? cur.cells : t.cells) || {};
+  const fill = RT_ZH[(cur && cur.fill) || t.fill] ? ((cur && cur.fill) || t.fill) : null;   // 没列出的格子
+  const cols = groups.flatMap(g => g.columns.map((c, j) => ({c, g0: j === 0})));
+  let h = "";
+  if (views.length > 1)
+    h += `<div class="rtv">` + views.map(v => `<button class="${v === cur ? "on" : ""}" data-tv="${esc(rtKey(t, i))}" `
+      + `data-tvv="${esc(encodeURIComponent(String(v.key)))}">${esc(v.label || v.key)}</button>`).join("") + `</div>`;
+  if (cur && cur.note) h += `<p class="sub">${esc(cur.note)}</p>`;
+  if (!cols.length || !rgs.length) return h + `<p class="sub">暂无内容</p>`;
+  const seen = new Set();
+  const head = `<tr class="h1"><th class="rl0" rowspan="2"></th>`
+    + groups.map(g => `<th class="g0" colspan="${g.columns.length}">${esc(g.label)}</th>`).join("") + `</tr>`
+    + `<tr class="h2">` + cols.map(({c, g0}) => `<th class="${g0 ? "g0" : ""}">${esc(c.label || c.key)}`
+      + (c.note ? `<small>${esc(c.note)}</small>` : "") + `</th>`).join("") + `</tr>`;
+  let body = "";
+  for (const g of rgs){
+    if (g.label) body += `<tr class="rg"><th>${esc(g.label)}</th><td colspan="${cols.length}"></td></tr>`;
+    for (const r of g.rows){
+      if (!r || typeof r !== "object") continue;
+      body += `<tr><th class="rl">${esc(r.label || r.key)}${r.note ? `<small>${esc(r.note)}</small>` : ""}</th>`
+        + cols.map(({c, g0}) => {
+            const cell = cells[String(r.key) + "|" + String(c.key)] || (fill ? {state: fill} : null);
+            if (cell && typeof cell === "object") seen.add(RT_ZH[cell.state] ? cell.state : "planned");
+            return rtCell(cell, g0);
+          }).join("") + `</tr>`;
+    }
+  }
+  const leg = RT_ORDER.filter(s => seen.has(s)).map(s => `<span><i class="s-${s}"></i>${RT_ZH[s]}</span>`).join("");
+  return h + `<div class="rtw" data-k="${esc(rtKey(t, i))}"><table class="rt"><thead>${head}</thead>`
+    + `<tbody>${body}</tbody></table></div>` + (leg ? `<div class="rtl">${leg}</div>` : "");
+}
+function tablesPanel(data){
+  const ts = Array.isArray(data.tables) ? data.tables : [];
+  return ts.map((t, i) => {
+    if (!t || typeof t !== "object") return "";
+    const sub = [t.subtitle ? esc(t.subtitle) : "",
+                 t.updated ? `更新于 ${ago(Date.now()/1000 - t.updated)}` : ""].filter(Boolean).join(" · ");
+    return panelBox("tb:" + rtKey(t, i), esc(t.title || ""), sub, () => rtTable(t, i))
+      .replace('<div class="panel', '<div class="panel tbp');
+  }).join("");
 }
 
 /* ------------------------------------------------------------- 任务进度 */
@@ -1155,9 +1292,23 @@ function render(data){
   $("#stamp").textContent = `数据更新于 ${ago(Date.now()/1000 - data.updated)}`;
   chartMetas = [];             // chart() 按面板出现顺序往里 push,下面按同一顺序接 hover
   blMetas = [];
-  root.innerHTML = researchPanel(data) + usagePanel(data) + tasksPanel(data)
+  // 结果表放最上面(owner 2026-11-05:要一张所有 baseline 在所有任务上的最终表)。每 60 s 重渲染一次,
+  // 表格容器的横/竖滚动位置要接回去,否则刚滑到右边几列就被弹回第一列。
+  const keep = {};
+  root.querySelectorAll(".rtw").forEach(el => { keep[el.dataset.k] = [el.scrollLeft, el.scrollTop]; });
+  root.innerHTML = tablesPanel(data) + researchPanel(data) + usagePanel(data) + tasksPanel(data)
     + GROUPS.map(g => groupPanels(data, g)).join("")
     + blPanels(data._bl);
+  root.querySelectorAll(".rtw").forEach(el => {
+    const s = keep[el.dataset.k];
+    if (s){ el.scrollLeft = s[0]; el.scrollTop = s[1]; }
+  });
+  root.querySelectorAll(".rtv button").forEach(el => {
+    el.onclick = () => {
+      setItem("tv:" + el.dataset.tv, decodeURIComponent(el.dataset.tvv));
+      commit(); render(latest);
+    };
+  });
 
   // SR 图和对垒图各有一套 meta 与 hover 逻辑,靠 .blbox 类分流
   root.querySelectorAll(".chartbox:not(.blbox)").forEach((box, i) => wireHover(box, chartMetas[i]));
@@ -1246,7 +1397,7 @@ addEventListener("resize", () => {          // 转屏要换 viewBox 档位,否�
 $("#refresh").onclick = tick;
 // 点指示器 = 立刻收一次 + 立刻发一次(不等 60s 轮询,也不等 1.2s 防抖)
 $("#sync").onclick = () => { tick(); clearTimeout(pushT); pushState(); };
-addEventListener("hashchange", tick);
+addEventListener("hashchange", () => { tokenDead = false; tick(); });
 /* 切回前台立刻收一次(手机切 app 回来不必等 60s 轮询),离开前把没推完的
  * 改动立刻推掉(防抖窗口里切走的话,那 1.2s 内的操作会拖到下次才发)。 */
 let lastVis = 0;
