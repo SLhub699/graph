@@ -1274,7 +1274,7 @@ function usagePanel(data){
       <td class="tl">${v.label || ("配额 " + (i+1))}<br><span class="soft">全组 ${v.n} 个作业在跑${
         v.mine_n != null ? `,我 ${v.mine_n} 个(${v.mine_mem_g}G${v.mine_gpu ? ` · GPU ${v.mine_gpu} 张` : ""}${v.mine_cpu != null ? ` · CPU ${v.mine_cpu} 核` : ""})` : ""}</span></td>
       <td class="qcell">内存 ${bar(v.mem_g, v.quota_mem_g, "G")}</td>
-      <td class="qcell">GPU ${bar(v.gpu, v.quota_gpu, " 张")}</td>
+      <td class="qcell">${v.quota_gpu === 0 ? "" : `GPU ${bar(v.gpu, v.quota_gpu, " 张")}`}</td>
       <td class="qcell">CPU ${v.cpu != null ? bar(v.cpu, v.quota_cpu, " 核") : `<span class="soft">旧密文无此项</span>`}</td>
     </tr>`).join("");
   // 口径说明(申请值、全组、三项任一占满都排队)用户早就知道,2026-10-20 起副标题只留采集时间
