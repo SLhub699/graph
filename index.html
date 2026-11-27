@@ -199,7 +199,7 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .rt th,.rt td{padding:5px 9px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--panel)}
 .rt thead th{position:sticky;top:0;z-index:2;color:var(--fg2);font-weight:600;text-align:center}
 .rt thead tr.h1 th{height:28px}
-.rt thead tr.h2 th{top:28px;font-weight:500;text-align:right}
+.rt thead tr.h2 th{top:28px;font-weight:500}
 .rt thead th small{display:block;font-size:10px;font-weight:400;color:var(--dim)}
 .rt th.rl0{left:0;z-index:4;text-align:left;vertical-align:bottom}
 .rt tbody th.rl{position:sticky;left:0;z-index:1;text-align:left;font-weight:500;color:var(--fg);
@@ -208,10 +208,11 @@ details.bld summary{cursor:pointer;font-size:12px;color:var(--fg2);padding:4px 0
 .rt tr.rg th,.rt tr.rg td{background:color-mix(in srgb,var(--fg2) 7%,var(--panel));color:var(--fg2);
   font-size:11px;font-weight:600;letter-spacing:.02em;text-align:left;padding-top:6px;padding-bottom:6px}
 .rt tr.rg th{position:sticky;left:0;z-index:1}
-.rt td{text-align:right;vertical-align:top;line-height:1.35}
+.rt td{text-align:center;vertical-align:top;line-height:1.35}
 .rt .g0{border-left:1px solid var(--line)}
 .rt td .v{display:block;color:var(--fg);font-weight:500}
 .rt td .sb{display:block;font-size:10.5px;color:var(--dim)}
+.rt td .sb.eta{color:var(--fg2)}
 .rt td .tag{display:inline-block;font-size:9.5px;line-height:1.3;border:1px solid var(--line);border-radius:4px;
   padding:0 3px;margin-left:4px;color:var(--fg2);font-weight:400;vertical-align:1px}
 .rt td.s-running{background:color-mix(in srgb,var(--run) 10%,var(--panel))}
@@ -970,10 +971,10 @@ function runBit(arm, key, now){
   // arm.ckpt_step(可选):存点步数;比 TB 步数小说明后面那段是白跑的,续跑要从存点重来
   const at = (st && st !== "RUNNING" && ck != null && ck < step) ? `${ck}/${total}(存点)`
                                                                  : `${step}${total ? "/" + total : ""}`;
-  // arm.eta:推送端用 val 每 10 步的 wall_time 差(中位数,躲开续跑的排队等待)算的 unix 时间戳。
+  // 图例不写预计完成时间(owner 2026-11-27:任务列表和结果表里已经有,重复);arm.eta 仍随载荷下发。
   // arm.trainer(可选,推送端按队列状态下发):不是 RUNNING 时推送端已把 eta 置空 —— 排队多久没人知道
   const tail = (st && st !== "RUNNING") ? (st === "PENDING" ? " 排队中" : st === "NONE" ? " 不在队列" : " " + esc(st))
-             : arm.eta ? ` 约 ${dur(arm.eta - now)}后完成` : "";
+             : "";
   // 阈值 90 分钟:val 评测期间完全不写标量,实测评测最长 46 分(2026-08-18);30 分钟会每次 val 都误报
   const idle = arm.mtime ? now - arm.mtime : null;
   const stale = idle !== null && idle > 5400 ? ` <span class="stale">${dur(idle)} 无写入</span>` : "";
@@ -1068,6 +1069,12 @@ function rtView(t, i){
   const want = tview[rtKey(t, i)];
   return {views: vs, cur: vs.find(v => String(v.key) === want) || vs[0]};
 }
+// c.eta(可选,推送端按训练步进节奏外推):[{label, ts}],一个格子同时等几个运行时各占一行并带标签
+function rtEta(list){
+  const es = (Array.isArray(list) ? list : []).filter(e => e && Number.isFinite(e.ts));
+  return es.map(e => `<span class="sb eta">${es.length > 1 ? esc(e.label || "") + " " : ""}`
+    + `预计 ${fmtStamp2(e.ts)} 完成</span>`).join("");
+}
 function rtCell(c, g0){
   const gc = g0 ? " g0" : "";
   if (!c || typeof c !== "object") return `<td class="s-none${gc}"></td>`;
@@ -1075,7 +1082,7 @@ function rtCell(c, g0){
   const val = (c.value === undefined || c.value === null || c.value === "") ? (RT_SHOW[st] || "") : String(c.value);
   return `<td class="s-${st}${c.best ? " best" : ""}${gc}"${c.title ? ` title="${esc(c.title)}"` : ""}>`
     + `<span class="v">${esc(val)}${c.tag ? `<span class="tag">${esc(c.tag)}</span>` : ""}</span>`
-    + (c.sub ? `<span class="sb">${esc(c.sub)}</span>` : "") + `</td>`;
+    + (c.sub ? `<span class="sb">${esc(c.sub)}</span>` : "") + rtEta(c.eta) + `</td>`;
 }
 function rtTable(t, i){
   const {views, cur} = rtView(t, i);
@@ -1178,6 +1185,12 @@ function taskRow(j){
         bits.push(`<span class="fin ${lvl}" title="${why}">${FIN_WORD[j.finish_src] || "预计完成"} `
           + `<b>${fmtStamp2(j.finish)}</b>`
           + (left > 0 ? ` · ${dur(left)}后` : "") + `</span>`);
+      }
+      // 推算时间后面跟时限上限(推送端只在 finish 不是时限本身时下发 latest)
+      if (j.finish && j.latest){
+        const left = j.latest - Date.now()/1000;
+        bits.push(`<span class="fin weak" title="作业时限到点(排队任务为预计起跑 + 时限),只是上限">最晚完成 `
+          + `<b>${fmtStamp2(j.latest)}</b>` + (left > 0 ? ` · ${dur(left)}后` : "") + `</span>`);
       }
       if (s === "RUNNING"){
         const pr = j.progress;
