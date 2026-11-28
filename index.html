@@ -1099,7 +1099,7 @@ function rtTable(t, i){
   if (cur && cur.note) h += `<p class="sub">${esc(cur.note)}</p>`;
   if (!cols.length || !rgs.length) return h + `<p class="sub">暂无内容</p>`;
   const seen = new Set();
-  const head = `<tr class="h1"><th class="rl0" rowspan="2"></th>`
+  const head = `<tr class="h1"><th class="rl0" rowspan="2">${t.corner ? esc(t.corner) : ""}</th>`
     + groups.map(g => `<th class="g0" colspan="${g.columns.length}">${esc(g.label)}</th>`).join("") + `</tr>`
     + `<tr class="h2">` + cols.map(({c, g0}) => `<th class="${g0 ? "g0" : ""}">${esc(c.label || c.key)}`
       + (c.note ? `<small>${esc(c.note)}</small>` : "") + `</th>`).join("") + `</tr>`;
